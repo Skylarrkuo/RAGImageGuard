@@ -16,7 +16,7 @@
       </div>
 
       <!-- Step 4: Scan animation + compare slider -->
-      <div v-else-if="step4Images" class="compare-container">
+      <div v-else-if="activeStep === 'step4' && step4Images" class="compare-container">
         <!-- Scan reveal phase -->
         <div v-if="scanPhase" class="scan-reveal" :class="{ 'scan-done': scanDone }">
           <img :src="step4Images.generated" alt="Generated" class="scan-image" @load="onImageLoad" />
@@ -62,7 +62,7 @@
       </div>
 
       <!-- Compliance queries: structured collapsible sections -->
-      <div v-else-if="hasCompliance" class="compliance-sections">
+      <div v-else-if="activeStep === 'step2' && hasCompliance" class="compliance-sections">
         <div
           v-for="q in complianceQueries"
           :key="q.index"
@@ -96,7 +96,7 @@
       <div v-else v-html="content"></div>
 
       <!-- Streaming cursor -->
-      <span v-if="loading && (hasContent || hasCompliance) && !step4Images" class="streaming-cursor"></span>
+      <span v-if="loading && (hasContent || (activeStep === 'step2' && hasCompliance)) && !(activeStep === 'step4' && step4Images)" class="streaming-cursor"></span>
     </div>
   </div>
 </template>
@@ -110,6 +110,7 @@ const props = defineProps({
   time: { type: String, default: '' },
   content: { type: String, default: '' },
   loading: { type: Boolean, default: false },
+  activeStep: { type: String, default: '' },
   complianceQueries: { type: Array, default: () => [] },
   step4Images: { type: Object, default: null },
 })

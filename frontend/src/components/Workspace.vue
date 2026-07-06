@@ -27,6 +27,7 @@
           :time="panelTime"
           :content="panelContent"
           :loading="panelLoading"
+          :active-step="currentStep"
           :compliance-queries="complianceQueries"
           :step4-images="step4Images"
           @toggle-compliance="toggleCompliance"
