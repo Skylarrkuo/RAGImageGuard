@@ -13,6 +13,7 @@
   <UploadPage
     v-if="currentPage === 'upload'"
     @start="handleStart"
+    @show-history="currentPage = 'history'"
   />
 
   <!-- Workspace Page -->
@@ -22,6 +23,12 @@
     :mode="currentMode"
     @back="goBack"
     @update:loading="loading = $event"
+  />
+
+  <!-- History Page -->
+  <HistoryPage
+    v-if="currentPage === 'history'"
+    @back="currentPage = 'upload'"
   />
 
   <!-- Footer (上传页显示，工作台隐藏以节省空间) -->
@@ -34,6 +41,7 @@
 import { ref } from 'vue'
 import UploadPage from './components/UploadPage.vue'
 import Workspace from './components/Workspace.vue'
+import HistoryPage from './components/HistoryPage.vue'
 
 const currentPage = ref('upload')
 const selectedFile = ref(null)

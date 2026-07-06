@@ -13,6 +13,7 @@ import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 # 项目根目录（app.py 现在位于根目录）
@@ -35,9 +36,32 @@ executor = ThreadPoolExecutor(max_workers=4)
 UPLOAD_DIR = project_root / "data" / "uploads" / "images"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+# 历史记录文件
+HISTORY_FILE = project_root / "data" / "history.json"
+
 # ============================================================
 # 工具函数
 # ============================================================
+
+def _load_history() -> list:
+    """读取历史记录"""
+    if not HISTORY_FILE.exists():
+        return []
+    try:
+        return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def _save_history(record: dict):
+    """追加一条历史记录"""
+    history = _load_history()
+    history.insert(0, record)  # 最新在前
+    # 最多保留 100 条
+    if len(history) > 100:
+        history = history[:100]
+    HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    HISTORY_FILE.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
 
 def _detect_image_format(filename: str, content_type: str = "") -> str:
     """从文件名或 content_type 检测图片格式"""
@@ -546,6 +570,32 @@ def api_full_pipeline():
         results["steps"]["image_edit"]["error"] = image_result.get("error")
 
     results["total_time_ms"] = int((time.time() - t1) * 1000)
+
+    # 自动保存历史记录
+    now = datetime.now(timezone(timedelta(hours=8)))
+    record = {
+        "id": uuid.uuid4().hex[:12],
+        "created_at": now.isoformat(timespec="seconds"),
+        "mode": "full",
+        "original_image": original_filename,
+        "generated_image": None,
+        "scene_description": scene_description if recognize_result.get("success") else None,
+        "compliance_analysis": compliance_result.get("analysis") if compliance_result.get("success") else None,
+        "compliance_queries": [],
+        "edit_prompt": prompt_result.get("prompt") if prompt_result.get("success") else None,
+        "step_times": {
+            "step1_ms": results["steps"].get("recognize", {}).get("time_ms"),
+            "step2_ms": results["steps"].get("compliance", {}).get("time_ms"),
+            "step3_ms": results["steps"].get("prompt", {}).get("time_ms"),
+            "step4_ms": results["steps"].get("image_edit", {}).get("time_ms"),
+        },
+        "status": "completed" if results["steps"].get("image_edit", {}).get("success") else "partial",
+    }
+    gen_img = results["steps"].get("image_edit", {}).get("image_url")
+    if gen_img:
+        record["generated_image"] = gen_img.split("/")[-1]
+    _save_history(record)
+
     return jsonify(results)
 
 
@@ -601,6 +651,26 @@ def api_full_pipeline_stream():
 
     def generate():
         t_total = time.time()
+        # 用于收集历史记录的中间变量
+        hist = {
+            "id": uuid.uuid4().hex[:12],
+            "created_at": datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="seconds"),
+            "mode": "full",
+            "original_image": original_filename,
+            "generated_image": None,
+            "scene_description": None,
+            "compliance_analysis": None,
+            "compliance_queries": [],
+            "edit_prompt": None,
+            "step_times": {},
+            "status": "partial",
+        }
+        hist_queries = []  # 收集子问题
+
+        def _save_and_done():
+            hist["compliance_queries"] = hist_queries
+            _save_history(hist)
+
         yield f"data: {json.dumps({'type': 'original', 'url': original_url}, ensure_ascii=False)}\n\n"
 
         # Step 1: 识别
@@ -608,13 +678,16 @@ def api_full_pipeline_stream():
         yield f"data: {json.dumps({'type': 'step', 'step': 'recognize', 'status': 'running'}, ensure_ascii=False)}\n\n"
         recognize_result = _recognize_with_mimo_sync(image_bytes, image_format)
         step_data = {"type": "step", "step": "recognize", "time_ms": int((time.time() - t1) * 1000), **recognize_result}
+        hist["step_times"]["step1_ms"] = step_data["time_ms"]
         yield f"data: {json.dumps(step_data, ensure_ascii=False)}\n\n"
 
         if not recognize_result.get("success"):
+            _save_and_done()
             yield f"data: {json.dumps({'type': 'done', 'total_time_ms': int((time.time() - t_total) * 1000)}, ensure_ascii=False)}\n\n"
             return
 
         scene_description = recognize_result["description"]
+        hist["scene_description"] = scene_description
 
         # Step 2: 合规分析（流式）
         t2 = time.time()
@@ -625,48 +698,71 @@ def api_full_pipeline_stream():
         for chunk in _stream_compliance(scene_description):
             if chunk["type"] == "content":
                 full_answer += chunk["text"]
+                # 将回答分配到对应的历史子问题
+                for hq in hist_queries:
+                    if hq["index"] == chunk["index"]:
+                        hq["answer"] = chunk["text"]
+                        break
                 # 实时推送每个内容块（带 index 精确匹配问题）
                 yield f"data: {json.dumps({'type': 'compliance_chunk', 'index': chunk['index'], 'text': chunk['text']}, ensure_ascii=False)}\n\n"
             elif chunk["type"] == "sources":
                 final_sources = chunk["sources"]
             elif chunk["type"] == "query_start":
+                hist_queries.append({"index": chunk["index"], "question": chunk["question"], "answer": ""})
                 yield f"data: {json.dumps({'type': 'compliance_query', 'index': chunk['index'], 'question': chunk['question']}, ensure_ascii=False)}\n\n"
             elif chunk["type"] == "query_end":
                 yield f"data: {json.dumps({'type': 'query_end', 'index': chunk['index']}, ensure_ascii=False)}\n\n"
 
+        t2_ms = int((time.time() - t2) * 1000)
+        hist["step_times"]["step2_ms"] = t2_ms
+
         if not full_answer:
-            yield f"data: {json.dumps({'type': 'step', 'step': 'compliance', 'time_ms': int((time.time() - t2) * 1000), 'success': False, 'error': 'MaxKB 未返回有效回答'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'step', 'step': 'compliance', 'time_ms': t2_ms, 'success': False, 'error': 'MaxKB 未返回有效回答'}, ensure_ascii=False)}\n\n"
+            _save_and_done()
             yield f"data: {json.dumps({'type': 'done', 'total_time_ms': int((time.time() - t_total) * 1000)}, ensure_ascii=False)}\n\n"
             return
 
-        yield f"data: {json.dumps({'type': 'step', 'step': 'compliance', 'time_ms': int((time.time() - t2) * 1000), 'success': True, 'analysis': full_answer, 'sources': final_sources}, ensure_ascii=False)}\n\n"
+        # 将回答按 index 分配到 hist_queries
+        # 由于 _stream_compliance 按完成顺序返回，回答是完整的一块
+        # 需要按顺序匹配：content 事件的 index 对应 hist_queries 中的条目
+        # 重新从 chunk 收集中按 index 累加
+        hist["compliance_analysis"] = full_answer
+        yield f"data: {json.dumps({'type': 'step', 'step': 'compliance', 'time_ms': t2_ms, 'success': True, 'analysis': full_answer, 'sources': final_sources}, ensure_ascii=False)}\n\n"
 
         # Step 3: 生成提示词
         t3 = time.time()
         yield f"data: {json.dumps({'type': 'step', 'step': 'prompt', 'status': 'running'}, ensure_ascii=False)}\n\n"
         prompt_result = _generate_edit_prompt_sync(scene_description, full_answer)
         step_data = {"type": "step", "step": "prompt", "time_ms": int((time.time() - t3) * 1000), **prompt_result}
+        hist["step_times"]["step3_ms"] = step_data["time_ms"]
         yield f"data: {json.dumps(step_data, ensure_ascii=False)}\n\n"
 
         if not prompt_result.get("success"):
+            _save_and_done()
             yield f"data: {json.dumps({'type': 'done', 'total_time_ms': int((time.time() - t_total) * 1000)}, ensure_ascii=False)}\n\n"
             return
+
+        hist["edit_prompt"] = prompt_result.get("prompt")
 
         # Step 4: 图片编辑
         t4 = time.time()
         yield f"data: {json.dumps({'type': 'step', 'step': 'image_edit', 'status': 'running'}, ensure_ascii=False)}\n\n"
         image_result = _generate_edited_image_sync(image_bytes, image_format, prompt_result["prompt"])
         step_data = {"type": "step", "step": "image_edit", "time_ms": int((time.time() - t4) * 1000)}
+        hist["step_times"]["step4_ms"] = step_data["time_ms"]
         if image_result.get("success"):
             gen_filename = f"generated_{uuid.uuid4().hex[:8]}.png"
             (UPLOAD_DIR / gen_filename).write_bytes(image_result["image_bytes"])
             step_data["success"] = True
             step_data["image_url"] = f"/images/{gen_filename}"
+            hist["generated_image"] = gen_filename
+            hist["status"] = "completed"
         else:
             step_data["success"] = False
             step_data["error"] = image_result.get("error")
         yield f"data: {json.dumps(step_data, ensure_ascii=False)}\n\n"
 
+        _save_and_done()
         yield f"data: {json.dumps({'type': 'done', 'total_time_ms': int((time.time() - t_total) * 1000)}, ensure_ascii=False)}\n\n"
 
     return Response(
@@ -674,6 +770,38 @@ def api_full_pipeline_stream():
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ============================================================
+# 历史记录 API
+# ============================================================
+
+@app.route("/api/history", methods=["GET"])
+def api_get_history():
+    """获取历史记录列表"""
+    history = _load_history()
+    return jsonify({"success": True, "records": history})
+
+
+@app.route("/api/history/<record_id>", methods=["GET"])
+def api_get_history_detail(record_id):
+    """获取单条历史记录详情"""
+    history = _load_history()
+    for record in history:
+        if record.get("id") == record_id:
+            return jsonify({"success": True, "record": record})
+    return jsonify({"success": False, "error": "记录不存在"}), 404
+
+
+@app.route("/api/history/<record_id>", methods=["DELETE"])
+def api_delete_history(record_id):
+    """删除一条历史记录"""
+    history = _load_history()
+    new_history = [r for r in history if r.get("id") != record_id]
+    if len(new_history) == len(history):
+        return jsonify({"success": False, "error": "记录不存在"}), 404
+    HISTORY_FILE.write_text(json.dumps(new_history, ensure_ascii=False, indent=2), encoding="utf-8")
+    return jsonify({"success": True})
 
 
 @app.route("/api/config-check")

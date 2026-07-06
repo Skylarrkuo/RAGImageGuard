@@ -58,6 +58,10 @@
         >
           {{ m.label }}
         </button>
+        <button class="btn btn-ghost" @click="emit('show-history')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          历史记录
+        </button>
       </div>
 
       <div class="config-strip">
@@ -82,7 +86,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { checkConfig } from '../api/index.js'
 
-const emit = defineEmits(['start'])
+const emit = defineEmits(['start', 'show-history'])
 
 const fileInput = ref(null)
 const selectedFile = ref(null)

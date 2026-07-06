@@ -86,3 +86,21 @@ export async function consumeSSEStream(reader, onEvent) {
     }
   }
 }
+
+/**
+ * 历史记录 API
+ */
+export async function getHistory() {
+  const resp = await fetch(`${API_BASE}/api/history`)
+  return resp.json()
+}
+
+export async function getHistoryDetail(id) {
+  const resp = await fetch(`${API_BASE}/api/history/${id}`)
+  return resp.json()
+}
+
+export async function deleteHistory(id) {
+  const resp = await fetch(`${API_BASE}/api/history/${id}`, { method: 'DELETE' })
+  return resp.json()
+}
