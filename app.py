@@ -187,26 +187,31 @@ def _query_maxkb_single(query: str, base_url: str, api_key: str) -> tuple:
 
 
 def _extract_sub_queries(scene_description: str) -> list:
-    """用 MiMo 从场景描述中提取最必要的合规检查子问题（2-3个）"""
+    """用 MiMo 从场景描述中提取合规检查子问题（4-5个，覆盖面广）"""
     api_key = settings.MIMO_API_KEY
     api_base = settings.MIMO_API_BASE
 
-    if not api_key:
-        return [
-            "旅游景区的标识标牌有哪些国家标准要求？",
-            "旅游景区的安全防护设施有哪些标准要求？",
-        ]
+    # 保底问题：覆盖主要合规维度
+    fallback_queries = [
+        "旅游景区的标识标牌有哪些国家标准要求？",
+        "旅游景区的安全防护设施有哪些标准要求？",
+        "旅游景区的无障碍设施有哪些标准要求？",
+    ]
 
-    prompt = f"""你是一个旅游景区合规检查专家。根据以下景区场景描述，只提取最关键的合规检查问题。
+    if not api_key:
+        return fallback_queries
+
+    prompt = f"""你是旅游景区合规检查专家。根据场景描述，生成覆盖全面的合规检查子问题。
 
 【场景描述】
 {scene_description}
 
 要求：
-1. 只关注场景中明确出现的设施或元素，不要泛泛而谈
-2. 每个问题聚焦一个具体标准要求（标识标牌、安全设施、无障碍、卫生等）
-3. 问题格式："旅游景区的XXX有哪些国家标准要求？"
-4. 最多输出3个问题，能用2个覆盖就不要写3个，每行一个，不要编号"""
+1. 逐项检查场景中出现的每个设施/元素，不要遗漏
+2. 覆盖这些维度：标识标牌、安全设施、无障碍设施、消防设施、照明、卫生环保、建筑装饰、信息服务设施、应急设施
+3. 只针对场景中确实存在的内容提问，没出现的跳过
+4. 每个问题简短具体，格式："XXX的国家标准要求？"（如"景区入口标识牌的文字和尺寸要求？"）
+5. 输出4-5个问题，每行一个，不要编号，不要多余解释"""
 
     try:
         resp = requests.post(
@@ -215,7 +220,7 @@ def _extract_sub_queries(scene_description: str) -> list:
             json={
                 "model": "mimo-v2.5",
                 "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 500,
+                "max_tokens": 600,
                 "temperature": 0.3,
             },
             timeout=60,
@@ -224,15 +229,10 @@ def _extract_sub_queries(scene_description: str) -> list:
             raise Exception(f"MiMo API error: {resp.status_code}")
 
         content = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
-        queries = [q.strip() for q in content.strip().split("\n") if q.strip() and len(q.strip()) > 10]
-        return queries[:3] if queries else [
-            "旅游景区的标识标牌有哪些国家标准要求？",
-        ]
+        queries = [q.strip() for q in content.strip().split("\n") if q.strip() and len(q.strip()) > 8]
+        return queries[:5] if queries else fallback_queries
     except Exception:
-        return [
-            "旅游景区的标识标牌有哪些国家标准要求？",
-            "旅游景区的安全防护设施有哪些标准要求？",
-        ]
+        return fallback_queries
 
 
 def _analyze_compliance_with_maxkb_sync(scene_description: str, user_role: str = "tourist") -> dict:
@@ -247,14 +247,14 @@ def _analyze_compliance_with_maxkb_sync(scene_description: str, user_role: str =
     sub_queries = _extract_sub_queries(scene_description)
     queries = [f"请根据旅游景区相关国家标准回答：{sq}" for sq in sub_queries]
 
-    # Step 2: 并行查询 MaxKB（2路并发）
+    # Step 2: 并行查询 MaxKB（4路并发）
     results = [None] * len(queries)
 
     def _query_one(idx, q):
         answer, sources = _query_maxkb_single(q, base_url, api_key)
         results[idx] = (answer, sources)
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    with ThreadPoolExecutor(max_workers=4) as pool:
         futures = [pool.submit(_query_one, i, q) for i, q in enumerate(queries)]
         for f in futures:
             f.result()
@@ -578,19 +578,19 @@ def api_full_pipeline_stream():
 
         all_sources = []
 
-        # 并行查询，每批2个
+        # 并行查询，每批4个
         def _fetch_one(idx, q):
             answer, sources = _query_maxkb_single(q, maxkb_base_url, maxkb_api_key)
             return idx, answer, sources
 
-        with ThreadPoolExecutor(max_workers=2) as pool:
+        with ThreadPoolExecutor(max_workers=4) as pool:
             futures = [pool.submit(_fetch_one, i, q) for i, q in enumerate(queries)]
             for f in futures:
                 idx, answer, sources = f.result()
                 # 按完成顺序推送事件
                 yield {"type": "query_start", "index": idx, "question": sub_queries[idx]}
                 if answer:
-                    yield {"type": "content", "text": answer}
+                    yield {"type": "content", "index": idx, "text": answer}
                 all_sources.extend(sources)
                 yield {"type": "query_end", "index": idx}
 
@@ -625,12 +625,14 @@ def api_full_pipeline_stream():
         for chunk in _stream_compliance(scene_description):
             if chunk["type"] == "content":
                 full_answer += chunk["text"]
-                # 实时推送每个内容块
-                yield f"data: {json.dumps({'type': 'compliance_chunk', 'text': chunk['text']}, ensure_ascii=False)}\n\n"
+                # 实时推送每个内容块（带 index 精确匹配问题）
+                yield f"data: {json.dumps({'type': 'compliance_chunk', 'index': chunk['index'], 'text': chunk['text']}, ensure_ascii=False)}\n\n"
             elif chunk["type"] == "sources":
                 final_sources = chunk["sources"]
             elif chunk["type"] == "query_start":
                 yield f"data: {json.dumps({'type': 'compliance_query', 'index': chunk['index'], 'question': chunk['question']}, ensure_ascii=False)}\n\n"
+            elif chunk["type"] == "query_end":
+                yield f"data: {json.dumps({'type': 'query_end', 'index': chunk['index']}, ensure_ascii=False)}\n\n"
 
         if not full_answer:
             yield f"data: {json.dumps({'type': 'step', 'step': 'compliance', 'time_ms': int((time.time() - t2) * 1000), 'success': False, 'error': 'MaxKB 未返回有效回答'}, ensure_ascii=False)}\n\n"

@@ -36,6 +36,7 @@
           :key="child.id"
           class="child-node"
           :class="child.state"
+          @click="$emit('toggle-compliance', child.index)"
         >
           <div class="child-dot"></div>
           <div class="child-node-text">Q{{ child.index + 1 }}: {{ child.question }}</div>
@@ -51,5 +52,5 @@ defineProps({
   activeStep: { type: String, default: '' },
 })
 
-defineEmits(['focus', 'retry'])
+defineEmits(['focus', 'retry', 'toggle-compliance'])
 </script>

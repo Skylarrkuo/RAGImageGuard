@@ -18,6 +18,7 @@
           :active-step="currentStep"
           @focus="focusStep"
           @retry="retryStep"
+          @toggle-compliance="toggleCompliance"
         />
 
         <!-- Content Panel -->
@@ -26,6 +27,9 @@
           :time="panelTime"
           :content="panelContent"
           :loading="panelLoading"
+          :compliance-queries="complianceQueries"
+          :step4-images="step4Images"
+          @toggle-compliance="toggleCompliance"
         />
       </div>
 
@@ -82,11 +86,18 @@ const nodes = ref({
 // Content for each step
 const stepContents = ref({})
 
+// Structured compliance queries (question + collapsible answer)
+const complianceQueries = ref([])
+
+// Step 4 image comparison data
+const step4Images = ref(null) // { original, generated }
+
 // Intermediate results for retry support
 const context = ref({
   sceneDescription: null,
   complianceAnalysis: null,
   editPrompt: null,
+  originalUrl: null,
 })
 
 // Summary times
@@ -117,9 +128,16 @@ const panelTitle = computed(() => {
 const panelContent = computed(() => {
   const raw = stepContents.value[currentStep.value]
   if (!raw) return '<div class="content-empty">等待数据...</div>'
-  // step2 stores raw markdown; others store pre-rendered HTML
+  // step2: 如果有结构化数据则由 ContentPanel 渲染，否则回退到 markdown
+  if (currentStep.value === 'step2' && complianceQueries.value.length > 0) {
+    return '' // ContentPanel 使用 complianceQueries prop 渲染
+  }
   if (currentStep.value === 'step2') {
     return renderMarkdown(raw)
+  }
+  // step4: 如果有对比数据则由 ContentPanel 渲染
+  if (currentStep.value === 'step4' && step4Images.value) {
+    return '' // ContentPanel 使用 step4Images prop 渲染
   }
   return raw
 })
@@ -160,6 +178,11 @@ function appendStepStream(stepId, text) {
   stepContents.value[stepId] += text
 }
 
+function toggleCompliance(index) {
+  const q = complianceQueries.value[index]
+  if (q) q.collapsed = !q.collapsed
+}
+
 // Run analysis based on mode
 async function runAnalysis() {
   emit('update:loading', true)
@@ -192,6 +215,11 @@ async function runFullPipeline() {
   const reader = await fullPipelineStream(props.file)
 
   await consumeSSEStream(reader, (ev) => {
+    // Original image URL
+    if (ev.type === 'original') {
+      context.value.originalUrl = ev.url
+    }
+
     // Step events
     if (ev.type === 'step') {
       const stepMap = { recognize: 'step1', compliance: 'step2', prompt: 'step3', image_edit: 'step4' }
@@ -212,12 +240,19 @@ async function runFullPipeline() {
             setStepContent(stepId, renderMarkdown(ev.description))
           } else if (stepId === 'step2') {
             context.value.complianceAnalysis = ev.analysis
+            // 如果没有通过流式构建 complianceQueries，回退到纯文本
+            if (complianceQueries.value.length === 0) {
+              stepContents.value.step2 = ev.analysis
+            }
           } else if (stepId === 'step3') {
             context.value.editPrompt = ev.prompt
             setStepContent(stepId, `<div class="prompt-box">${ev.prompt}</div>`)
           } else if (stepId === 'step4') {
             if (ev.success && ev.image_url) {
-              setStepContent(stepId, `<div class="generated-wrap"><img src="${ev.image_url}" alt="Generated"></div>`)
+              step4Images.value = {
+                original: context.value.originalUrl,
+                generated: ev.image_url,
+              }
             }
           }
         }
@@ -236,21 +271,28 @@ async function runFullPipeline() {
         question: ev.question,
         state: 'running',
       })
-
-      // Add query divider (will be wrapped by renderMarkdown later via marked's sanitize)
-      const divider = ev.index > 0 ? '\n\n---\n\n' : ''
-      stepContents.value.step2 = (stepContents.value.step2 || '') + `${divider}### 问题 ${ev.index + 1}\n*${ev.question}*\n\n`
+      complianceQueries.value.push({
+        index: ev.index,
+        question: ev.question,
+        answer: '',
+        collapsed: false, // 新问题展开显示
+      })
     }
 
-    // Compliance chunk (streaming content)
+    // Compliance chunk (streaming content → 精确匹配到对应问题)
     if (ev.type === 'compliance_chunk') {
-      appendStepStream('step2', ev.text)
+      const targetQuery = complianceQueries.value.find(q => q.index === ev.index)
+      if (targetQuery) {
+        targetQuery.answer += ev.text
+      }
     }
 
-    // Query end
+    // Query end → 折叠已完成的回答
     if (ev.type === 'query_end') {
       const child = nodes.value.step2.children.find(c => c.id === `child-${ev.index}`)
       if (child) child.state = 'success'
+      const query = complianceQueries.value.find(q => q.index === ev.index)
+      if (query) query.collapsed = true
     }
 
     // Done
@@ -359,6 +401,7 @@ async function retryStep2() {
   // Clear previous children
   nodes.value.step2.children = []
   stepContents.value.step2 = ''
+  complianceQueries.value = []
 
   const data = await analyzeCompliance(context.value.sceneDescription)
 
@@ -411,7 +454,10 @@ async function retryStep4() {
 
   if (data.success) {
     setNodeState('step4', 'success', data.time_ms)
-    setStepContent('step4', `<div class="generated-wrap"><img src="${data.image_url}" alt="Generated"></div>`)
+    step4Images.value = {
+      original: context.value.originalUrl,
+      generated: data.image_url,
+    }
   } else {
     setNodeState('step4', 'error')
     setStepContent('step4', `<div class="md-content" style="color:var(--accent)">✗ ${data.error}</div>`)

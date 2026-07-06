@@ -482,7 +482,10 @@ body {
   border-left: 1px solid var(--muted);
   padding-left: 0.75rem;
   margin-left: 0.35rem;
+  cursor: pointer;
+  transition: color 200ms;
 }
+.child-node:hover .child-node-text { color: var(--fg); }
 .child-dot {
   width: 6px; height: 6px;
   border: 1px solid var(--neutral-400);
@@ -708,6 +711,239 @@ body {
   margin-top: 1rem;
 }
 .query-divider:first-child { border-top: none; margin-top: 0; padding-top: 0; }
+
+/* ── Compliance Sections (Collapsible) ── */
+.compliance-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.compliance-section {
+  border-bottom: 1px solid var(--muted);
+}
+.compliance-section:last-child { border-bottom: none; }
+
+.compliance-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 0;
+  cursor: pointer;
+  user-select: none;
+  transition: color 200ms;
+}
+.compliance-header:hover { color: var(--accent); }
+
+.compliance-chevron {
+  flex-shrink: 0;
+  transition: transform 200ms ease;
+  color: var(--neutral-400);
+}
+.compliance-chevron.rotated { transform: rotate(90deg); }
+
+.compliance-question {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.compliance-body {
+  padding: 0 0 1rem 1.25rem;
+  border-left: 2px solid var(--muted);
+  margin-left: 5px;
+  overflow: hidden;
+}
+
+.compliance-pending {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--neutral-400);
+  padding: 0.5rem 0;
+}
+
+.dot-pulse::after {
+  content: '';
+  animation: dotPulseText 1.5s steps(4, end) infinite;
+}
+@keyframes dotPulseText {
+  0% { content: ''; }
+  25% { content: '.'; }
+  50% { content: '..'; }
+  75% { content: '...'; }
+}
+
+/* ── Step 4: Scan Reveal Animation ── */
+.compare-container {
+  width: 100%;
+  max-width: 640px;
+}
+
+.scan-reveal {
+  position: relative;
+  overflow: hidden;
+  border: 2px solid var(--fg);
+  background: var(--fg);
+}
+
+.scan-image {
+  width: 100%;
+  display: block;
+  clip-path: inset(0 0 100% 0);
+  transition: clip-path 1.5s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.scan-reveal.scan-done .scan-image {
+  clip-path: inset(0 0 0% 0);
+}
+
+.scan-line {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--accent);
+  box-shadow: 0 0 20px 4px var(--accent), 0 0 60px 8px rgba(204, 0, 0, 0.3);
+  transform: translateY(-100%);
+  z-index: 2;
+}
+
+.scan-reveal.scan-done .scan-line {
+  animation: scanMove 1.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+@keyframes scanMove {
+  0% { transform: translateY(0); opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(calc(100vh)); opacity: 0; }
+}
+
+.scan-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(17, 17, 17, 0.6);
+  z-index: 3;
+  transition: opacity 0.4s ease 1.2s;
+  pointer-events: none;
+}
+
+.scan-reveal.scan-done .scan-overlay {
+  opacity: 0;
+}
+
+.scan-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--accent);
+  animation: textFade 1s ease-in-out infinite;
+}
+
+/* ── Step 4: Before/After Compare Slider ── */
+.image-compare {
+  position: relative;
+  width: 100%;
+  border: 2px solid var(--fg);
+  cursor: ew-resize;
+  user-select: none;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.compare-layer {
+  width: 100%;
+}
+
+.compare-layer img {
+  width: 100%;
+  display: block;
+  pointer-events: none;
+}
+
+.compare-layer-before {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  /* clip-path set by inline style */
+}
+
+.compare-layer-after {
+  position: relative;
+  z-index: 0;
+}
+
+.compare-slider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.compare-slider-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #fff;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
+}
+
+.compare-slider-handle {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  background: #fff;
+  border: 2px solid var(--fg);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  pointer-events: auto;
+  z-index: 3;
+}
+
+.compare-slider-handle svg {
+  stroke: var(--fg);
+  flex-shrink: 0;
+}
+
+.compare-label {
+  position: absolute;
+  bottom: 0.75rem;
+  z-index: 4;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.55rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  padding: 0.2rem 0.6rem;
+  background: rgba(17, 17, 17, 0.75);
+  color: #fff;
+  pointer-events: none;
+}
+
+.compare-label-before {
+  left: 0.75rem;
+}
+
+.compare-label-after {
+  right: 0.75rem;
+}
 
 /* Prompt box */
 .prompt-box {
