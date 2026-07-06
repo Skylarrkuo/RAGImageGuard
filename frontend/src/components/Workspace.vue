@@ -229,6 +229,7 @@ async function runFullPipeline() {
       if (ev.status === 'running') {
         setNodeState(stepId, 'running')
         focusStep(stepId)
+        if (stepId === 'step4') step4Images.value = null
       } else {
         const timeMs = ev.time_ms || 0
         if (ev.success === false) {
@@ -449,6 +450,7 @@ async function retryStep4() {
 
   setNodeState('step4', 'running')
   focusStep('step4')
+  step4Images.value = null // 清空旧图，触发扫描动画重置
 
   const { generateImage } = await import('../api/index.js')
   const data = await generateImage(props.file, context.value.editPrompt)

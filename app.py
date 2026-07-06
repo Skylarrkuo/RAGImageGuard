@@ -375,45 +375,84 @@ def _generate_edit_prompt_sync(scene_description: str, compliance_analysis: str)
 # ============================================================
 
 def _generate_edited_image_sync(image_bytes: bytes, image_format: str, prompt: str) -> dict:
-    """调用 OpenAI Images API (gpt-image-2) 进行图片编辑（同步版本）"""
-    from openai import OpenAI
+    """调用 OpenAI Images API (gpt-image-2) 进行图片编辑（同步版本，含重试）"""
+    from openai import OpenAI, APIConnectionError, APITimeoutError, RateLimitError
     import httpx
 
     api_key = settings.OPENAI_API_KEY
     if not api_key:
         return {"success": False, "error": "OPENAI_API_KEY 未配置"}
 
-    try:
-        # 设置较长超时，图片生成可能需要 60-120 秒，禁用代理
-        http_client = httpx.Client(proxy=None, timeout=300.0)
-        client = OpenAI(api_key=api_key, base_url=settings.OPENAI_API_BASE, timeout=300.0, http_client=http_client)
+    # 需要清除的代理环境变量（包括 OpenAI SDK 读取的）
+    proxy_env_keys = [
+        "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
+        "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy",
+        "OPENAI_PROXY",
+    ]
 
-        # 将图片转为 file-like 对象
-        image_file = io.BytesIO(image_bytes)
-        image_file.name = f"image.{image_format}"
+    def _call_api():
+        """单次 API 调用"""
+        # 清除代理环境变量
+        saved_env = {}
+        for k in proxy_env_keys:
+            if k in os.environ:
+                saved_env[k] = os.environ.pop(k)
+        try:
+            timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
+            http_client = httpx.Client(proxy=None, timeout=timeout)
+            client = OpenAI(api_key=api_key, base_url=settings.OPENAI_API_BASE, timeout=600.0, http_client=http_client)
 
-        # 调用图片编辑接口
-        result = client.images.edit(
-            model="gpt-image-2",
-            image=image_file,
-            prompt=prompt,
-            n=1,
-            size="1024x1024",
-        )
+            image_file = io.BytesIO(image_bytes)
+            image_file.name = f"image.{image_format}"
 
-        image_data_b64 = result.data[0].b64_json
-        if image_data_b64:
-            image_bytes_result = base64.b64decode(image_data_b64)
-        else:
-            # 如果返回的是 URL，下载图片
-            image_url = result.data[0].url
-            dl_resp = requests.get(image_url, timeout=120)
-            image_bytes_result = dl_resp.content
+            result = client.images.edit(
+                model="gpt-image-2",
+                image=image_file,
+                prompt=prompt,
+                n=1,
+                size="1024x1024",
+            )
 
-        return {"success": True, "image_bytes": image_bytes_result}
+            image_data_b64 = result.data[0].b64_json
+            if image_data_b64:
+                return base64.b64decode(image_data_b64)
+            else:
+                image_url = result.data[0].url
+                dl_resp = requests.get(image_url, timeout=120)
+                return dl_resp.content
+        finally:
+            for k, v in saved_env.items():
+                os.environ[k] = v
 
-    except Exception as e:
-        return {"success": False, "error": f"图片编辑失败: {str(e)}"}
+    # 重试逻辑：最多 3 次，遇到连接/超时错误重试
+    max_retries = 3
+    last_error = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            print(f"[GPT-Image] 尝试 {attempt}/{max_retries}...")
+            image_bytes_result = _call_api()
+            print(f"[GPT-Image] 成功，图片大小: {len(image_bytes_result)} bytes")
+            return {"success": True, "image_bytes": image_bytes_result}
+        except (APIConnectionError, APITimeoutError) as e:
+            last_error = e
+            print(f"[GPT-Image] 连接错误 (尝试 {attempt}): {type(e).__name__}: {e}")
+            if attempt < max_retries:
+                import time
+                wait = 10 * attempt
+                print(f"[GPT-Image] 等待 {wait}s 后重试...")
+                time.sleep(wait)
+        except RateLimitError as e:
+            last_error = e
+            print(f"[GPT-Image] 频率限制: {e}")
+            if attempt < max_retries:
+                import time
+                time.sleep(30)
+        except Exception as e:
+            last_error = e
+            print(f"[GPT-Image] 未知错误: {type(e).__name__}: {e}")
+            break  # 不可重试的错误
+
+    return {"success": False, "error": f"图片编辑失败: {type(last_error).__name__}: {last_error}"}
 
 
 # ============================================================
