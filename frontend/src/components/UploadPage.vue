@@ -70,7 +70,7 @@
           <div class="config-item-value" :class="configClass('mimo')">{{ configText('mimo') }}</div>
         </div>
         <div>
-          <div class="config-item-label">MaxKB Pro</div>
+          <div class="config-item-label">MaxKB RAG</div>
           <div class="config-item-value" :class="configClass('maxkb')">{{ configText('maxkb') }}</div>
         </div>
         <div>
@@ -109,7 +109,7 @@ const fileSize = computed(() => {
 function configClass(key) {
   if (!config.value) return ''
   if (key === 'mimo') return config.value.mimo?.api_key_configured ? 'ok' : 'missing'
-  if (key === 'maxkb') return config.value.maxkb?.pro_key_configured ? 'ok' : 'missing'
+  if (key === 'maxkb') return config.value.maxkb?.scene_optimize_key_configured ? 'ok' : 'missing'
   if (key === 'openai') return config.value.openai?.api_key_configured ? 'ok' : 'missing'
   return ''
 }
@@ -117,7 +117,7 @@ function configClass(key) {
 function configText(key) {
   if (!config.value) return '—'
   if (key === 'mimo') return config.value.mimo?.api_key_configured ? 'OK' : 'Missing'
-  if (key === 'maxkb') return config.value.maxkb?.pro_key_configured ? 'OK' : 'Missing'
+  if (key === 'maxkb') return config.value.maxkb?.scene_optimize_key_configured ? 'OK' : 'Missing'
   if (key === 'openai') return config.value.openai?.api_key_configured ? 'OK' : 'Missing'
   return '—'
 }
