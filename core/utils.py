@@ -1,4 +1,32 @@
-"""通用工具函数：图片格式检测、MIME 映射"""
+"""通用工具函数：图片格式检测、MIME 映射、尺寸计算"""
+
+import io
+from PIL import Image
+
+
+def get_image_dimensions(image_bytes: bytes) -> tuple[int, int]:
+    """从图片字节流中获取宽高"""
+    img = Image.open(io.BytesIO(image_bytes))
+    return img.size  # (width, height)
+
+
+def pick_gpt_image_size(width: int, height: int) -> str:
+    """根据图片宽高比选择 GPT-image-2 支持的最接近尺寸
+
+    GPT-image-2 支持的尺寸:
+      - 1024x1024  (1:1)
+      - 1536x1024  (3:2 横屏)
+      - 1024x1536  (2:3 竖屏)
+      - auto       (自动)
+    """
+    ratio = width / height
+
+    if ratio < 0.8:          # 竖屏: 比例 < 4:5
+        return "1024x1536"
+    elif ratio > 1.25:       # 横屏: 比例 > 5:4
+        return "1536x1024"
+    else:                    # 接近正方形
+        return "1024x1024"
 
 
 def detect_image_format(filename: str, content_type: str = "") -> str:

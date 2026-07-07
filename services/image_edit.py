@@ -9,6 +9,7 @@ import requests
 
 from config.settings import settings
 from core.logging import logger
+from core.utils import get_image_dimensions, pick_gpt_image_size
 
 
 def generate_edited_image(image_bytes: bytes, image_format: str, prompt: str) -> dict:
@@ -19,6 +20,15 @@ def generate_edited_image(image_bytes: bytes, image_format: str, prompt: str) ->
     api_key = settings.OPENAI_API_KEY
     if not api_key:
         return {"success": False, "error": "OPENAI_API_KEY 未配置"}
+
+    # 自动检测图片尺寸并选择合适的生成比例
+    try:
+        width, height = get_image_dimensions(image_bytes)
+        target_size = pick_gpt_image_size(width, height)
+        logger.info(f"[Step4] 原始图片尺寸: {width}x{height} → 生成尺寸: {target_size}")
+    except Exception as e:
+        logger.warning(f"[Step4] 无法检测图片尺寸, 使用默认 1024x1024: {e}")
+        target_size = "1024x1024"
 
     logger.info(f"[Step4] 开始 GPT-Image 图片编辑 | 图片大小: {len(image_bytes)} bytes | 格式: {image_format}")
     logger.info(f"[Step4] 编辑提示词:\n{prompt}")
@@ -50,7 +60,7 @@ def generate_edited_image(image_bytes: bytes, image_format: str, prompt: str) ->
                 image=image_file,
                 prompt=prompt,
                 n=1,
-                size="1024x1024",
+                size=target_size,
             )
 
             image_data_b64 = result.data[0].b64_json
