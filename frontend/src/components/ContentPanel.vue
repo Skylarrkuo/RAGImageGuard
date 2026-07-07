@@ -6,13 +6,32 @@
     </div>
     <div class="content-panel-body" ref="bodyRef">
       <!-- Loading state -->
-      <div v-if="loading && !hasContent && !hasCompliance && !step4Images" class="content-loading">
+      <div v-if="loading && !hasContent && !hasCompliance && !step4Images && activeStep !== 'step4'" class="content-loading">
         <div class="loading-dots">
           <span></span>
           <span></span>
           <span></span>
         </div>
         <div class="loading-text">正在生成</div>
+      </div>
+
+      <!-- Step 4: Generating animation (waiting for image) -->
+      <div v-else-if="activeStep === 'step4' && loading && !step4Images" class="generating-container">
+        <div class="generating-visual">
+          <div class="generating-ring"></div>
+          <div class="generating-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+              <path d="M2 17l10 5 10-5"/>
+              <path d="M2 12l10 5 10-5"/>
+            </svg>
+          </div>
+        </div>
+        <div class="generating-text">AI 正在生成图片</div>
+        <div class="generating-subtext">根据提示词进行图像编辑，请稍候...</div>
+        <div class="generating-progress">
+          <div class="generating-progress-bar"></div>
+        </div>
       </div>
 
       <!-- Step 4: Scan animation + compare slider -->
@@ -59,6 +78,21 @@
         <div v-else class="generated-wrap">
           <img :src="step4Images.generated" alt="Generated" />
         </div>
+
+        <!-- Edit Summary Section -->
+        <div v-if="step4Summary" class="edit-summary-section">
+          <div class="summary-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="16" y1="13" x2="8" y2="13"/>
+              <line x1="16" y1="17" x2="8" y2="17"/>
+              <polyline points="10 9 9 9 8 9"/>
+            </svg>
+            <span>修改总结与建议</span>
+          </div>
+          <div class="summary-content md-content" v-html="renderMarkdown(step4Summary)"></div>
+        </div>
       </div>
 
       <!-- Step 5: Result compare slider (after refinement completes) -->
@@ -96,6 +130,25 @@
         </div>
         <div v-else class="generated-wrap">
           <img :src="step5Images.generated" alt="Refined" />
+        </div>
+      </div>
+
+      <!-- Step 5: Generating animation (waiting for refined image) -->
+      <div v-else-if="activeStep === 'step5' && loading && !step5Images" class="generating-container">
+        <div class="generating-visual">
+          <div class="generating-ring"></div>
+          <div class="generating-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+              <path d="M2 17l10 5 10-5"/>
+              <path d="M2 12l10 5 10-5"/>
+            </svg>
+          </div>
+        </div>
+        <div class="generating-text">AI 正在精修图片</div>
+        <div class="generating-subtext">根据修正提示词进行二次编辑，请稍候...</div>
+        <div class="generating-progress">
+          <div class="generating-progress-bar"></div>
         </div>
       </div>
 
@@ -173,6 +226,7 @@ const props = defineProps({
   activeStep: { type: String, default: '' },
   complianceQueries: { type: Array, default: () => [] },
   step4Images: { type: Object, default: null },
+  step4Summary: { type: String, default: '' },
   step5Images: { type: Object, default: null },
 })
 
@@ -255,7 +309,7 @@ function updateSlider(e) {
 }
 
 // Auto-scroll to bottom when content changes
-watch(() => [props.content, props.complianceQueries], async () => {
+watch(() => [props.content, props.complianceQueries, props.step4Summary], async () => {
   await nextTick()
   if (bodyRef.value) {
     bodyRef.value.scrollTop = bodyRef.value.scrollHeight

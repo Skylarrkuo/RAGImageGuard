@@ -13,7 +13,7 @@ from core.logging import logger
 from core.utils import detect_image_format, create_thumbnail
 from services.mimo import recognize_with_mimo
 from services.maxkb import analyze_compliance_with_maxkb, extract_sub_queries, _query_maxkb_single
-from services.prompt_gen import generate_edit_prompt
+from services.prompt_gen import generate_edit_prompt, generate_edit_summary
 from services.image_edit import generate_edited_image
 from services.history import save_history, update_history
 
@@ -256,11 +256,22 @@ def api_full_pipeline():
     logger.info(f"[Pipeline] Step 4 完成 | 耗时: {results['steps']['image_edit']['time_ms']}ms | success={image_result.get('success')}")
 
     gen_rel = None
+    edit_summary = None
     if image_result.get("success"):
         gen_filename = f"generated_{uuid.uuid4().hex[:8]}.png"
         gen_rel = _save_with_thumbnail(gen_filename, image_result["image_bytes"], subdir="generated")
         results["steps"]["image_edit"]["success"] = True
         results["steps"]["image_edit"]["image_url"] = f"/images/{gen_rel}"
+
+        # 生成修改总结和建议
+        logger.info("[Pipeline] ========== 生成修改总结 ==========")
+        summary_result = generate_edit_summary(prompt_result["prompt"])
+        if summary_result.get("success"):
+            edit_summary = summary_result["summary"]
+            results["steps"]["image_edit"]["summary"] = edit_summary
+            logger.info(f"[Pipeline] 修改总结生成成功 | 长度: {len(edit_summary)} 字符")
+        else:
+            logger.warning(f"[Pipeline] 修改总结生成失败: {summary_result.get('error')}")
     else:
         results["steps"]["image_edit"]["success"] = False
         results["steps"]["image_edit"]["error"] = image_result.get("error")
@@ -280,6 +291,7 @@ def api_full_pipeline():
         "compliance_analysis": compliance_result.get("analysis") if compliance_result.get("success") else None,
         "compliance_queries": [],
         "edit_prompt": prompt_result.get("prompt") if prompt_result.get("success") else None,
+        "edit_summary": edit_summary,
         "refine_prompt": None,
         "refined_image": None,
         "step_times": {
@@ -469,6 +481,17 @@ def api_full_pipeline_stream():
             step_data["image_url"] = f"/images/{gen_rel}"
             hist["generated_image"] = gen_rel
             hist["status"] = "completed"
+
+            # 生成修改总结和建议
+            logger.info("[SSE] ========== 生成修改总结 ==========")
+            summary_result = generate_edit_summary(prompt_result["prompt"])
+            if summary_result.get("success"):
+                edit_summary = summary_result["summary"]
+                step_data["summary"] = edit_summary
+                hist["edit_summary"] = edit_summary
+                logger.info(f"[SSE] 修改总结生成成功 | 长度: {len(edit_summary)} 字符")
+            else:
+                logger.warning(f"[SSE] 修改总结生成失败: {summary_result.get('error')}")
         else:
             step_data["success"] = False
             step_data["error"] = image_result.get("error")

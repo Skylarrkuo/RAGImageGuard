@@ -30,6 +30,7 @@
           :active-step="currentStep"
           :compliance-queries="complianceQueries"
           :step4-images="step4Images"
+          :step4-summary="editSummary"
           :step5-images="step5Images"
           @toggle-compliance="toggleCompliance"
           @run-step5="runStep5"
@@ -95,6 +96,9 @@ const complianceQueries = ref([])
 
 // Step 4 image comparison data
 const step4Images = ref(null) // { original, generated }
+
+// Step 4 edit summary
+const editSummary = ref('')
 
 // Step 5 image comparison data
 const step5Images = ref(null) // { original, generated }
@@ -270,6 +274,10 @@ async function runFullPipeline() {
                 generated: ev.image_url,
               }
               context.value.generatedUrl = ev.image_url
+              // 保存修改总结
+              if (ev.summary) {
+                editSummary.value = ev.summary
+              }
               // 激活 Step 5
               setNodeState('step5', 'pending')
               focusStep('step5')
@@ -485,6 +493,10 @@ async function retryStep4() {
       generated: data.image_url,
     }
     context.value.generatedUrl = data.image_url
+    // 保存修改总结
+    if (data.summary) {
+      editSummary.value = data.summary
+    }
     // 激活 Step 5
     setNodeState('step5', 'pending')
     focusStep('step5')
