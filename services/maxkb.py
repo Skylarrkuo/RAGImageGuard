@@ -62,10 +62,59 @@ def _query_maxkb_single(query: str, base_url: str, api_key: str) -> tuple:
         return "", []
 
 
+def _parse_queries(content: str) -> list:
+    """解析 LLM 返回的问题列表，去掉编号前缀，过滤空行和过短行"""
+    raw_lines = content.strip().split("\n")
+    queries = []
+    for line in raw_lines:
+        q = line.strip()
+        if not q:
+            continue
+        # 去掉常见编号前缀
+        for prefix in ("1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.",
+                       "1、", "2、", "3、", "4、", "5、",
+                       "- ", "* ", "• "):
+            if q.startswith(prefix):
+                q = q[len(prefix):].strip()
+                break
+        if len(q) > 8:
+            queries.append(q)
+    return queries
+
+
+def _call_mimo(prompt: str, max_tokens: int = 600) -> str:
+    """调用 MiMo LLM，返回 content，带重试"""
+    api_key = settings.MIMO_API_KEY
+    api_base = settings.MIMO_API_BASE
+
+    for attempt in range(1, 4):
+        try:
+            resp = requests.post(
+                f"{api_base}/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": "mimo-v2.5",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": max_tokens,
+                    "temperature": 0.3,
+                },
+                timeout=60,
+            )
+            if resp.status_code != 200:
+                logger.warning(f"[MiMo] 请求失败 (尝试 {attempt}): {resp.status_code} - {resp.text[:200]}")
+                continue
+            content = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+            if content.strip():
+                return content
+            logger.warning(f"[MiMo] 返回空内容 (尝试 {attempt})")
+        except Exception as e:
+            logger.warning(f"[MiMo] 请求异常 (尝试 {attempt}): {e}")
+    return ""
+
+
 def extract_sub_queries(scene_description: str) -> list:
     """用 MiMo 从场景描述中提取合规检查子问题（4-5个，覆盖面广）"""
     api_key = settings.MIMO_API_KEY
-    api_base = settings.MIMO_API_BASE
 
     # 保底问题：覆盖主要合规维度
     fallback_queries = [
@@ -77,6 +126,10 @@ def extract_sub_queries(scene_description: str) -> list:
     if not api_key:
         return fallback_queries
 
+    logger.info(f"[Step2] 开始提取合规子问题")
+    logger.debug(f"[Step2] 场景描述:\n{scene_description[:500]}...")
+
+    # 主 prompt：详细版
     prompt = f"""你是旅游景区合规检查专家。根据场景描述，生成覆盖全面的合规检查子问题。
 
 【场景描述】
@@ -89,34 +142,36 @@ def extract_sub_queries(scene_description: str) -> list:
 4. 每个问题简短具体，格式："XXX的国家标准要求？"（如"景区入口标识牌的文字和尺寸要求？"）
 5. 输出4-5个问题，每行一个，不要编号，不要多余解释"""
 
-    logger.info(f"[Step2] 开始提取合规子问题")
-    logger.debug(f"[Step2] 场景描述:\n{scene_description[:500]}...")
+    content = _call_mimo(prompt, max_tokens=600)
+    logger.debug(f"[Step2] MiMo 返回原始内容:\n{content}")
+    queries = _parse_queries(content)
 
-    try:
-        resp = requests.post(
-            f"{api_base}/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={
-                "model": "mimo-v2.5",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 600,
-                "temperature": 0.3,
-            },
-            timeout=60,
-        )
-        if resp.status_code != 200:
-            raise Exception(f"MiMo API error: {resp.status_code}")
+    # 如果主 prompt 没解析出问题，用精简版重试
+    if not queries:
+        logger.warning(f"[Step2] 主 prompt 未返回有效问题，使用精简 prompt 重试")
+        # 精简 prompt：只提取场景中的关键元素
+        key_elements = scene_description[:800]
+        prompt_short = f"""根据以下景区场景，列出需要检查国家标准合规性的4-5个具体问题，每行一个。
 
-        content = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
-        queries = [q.strip() for q in content.strip().split("\n") if q.strip() and len(q.strip()) > 8]
-        result = queries[:5] if queries else fallback_queries
-        logger.info(f"[Step2] 提取到 {len(result)} 个子问题:")
-        for i, q in enumerate(result):
-            logger.info(f"  子问题{i+1}: {q}")
-        return result
-    except Exception as e:
-        logger.warning(f"[Step2] 提取子问题失败，使用兜底问题: {e}")
+场景：{key_elements}
+
+格式示例：
+景区出口标识牌的文字规范要求？
+景区路灯照明的亮度标准？"""
+
+        content2 = _call_mimo(prompt_short, max_tokens=400)
+        logger.debug(f"[Step2] 精简 prompt 返回:\n{content2}")
+        queries = _parse_queries(content2)
+
+    if not queries:
+        logger.warning(f"[Step2] 两次尝试均未返回有效问题，使用兜底问题")
         return fallback_queries
+
+    result = queries[:5]
+    logger.info(f"[Step2] 提取到 {len(result)} 个子问题:")
+    for i, q in enumerate(result):
+        logger.info(f"  子问题{i+1}: {q}")
+    return result
 
 
 def analyze_compliance_with_maxkb(scene_description: str, user_role: str = "tourist") -> dict:
@@ -129,7 +184,7 @@ def analyze_compliance_with_maxkb(scene_description: str, user_role: str = "tour
 
     # Step 1: 提取子问题
     sub_queries = extract_sub_queries(scene_description)
-    queries = [f"请根据旅游景区相关国家标准回答：{sq}" for sq in sub_queries]
+    queries = [f"以下是景区场景描述：\n{scene_description}\n\n请根据以上场景和旅游景区相关国家标准回答：{sq}" for sq in sub_queries]
     logger.info(f"[Step2] 开始并行查询 MaxKB | 共 {len(queries)} 个问题")
 
     # Step 2: 并行查询 MaxKB（4路并发）
