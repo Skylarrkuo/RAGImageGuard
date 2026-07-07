@@ -34,9 +34,8 @@ def api_config_check():
             "api_base": settings.MIMO_API_BASE,
         },
         "maxkb": {
-            "standard_key_configured": bool(settings.MAXKB_STANDARD_API_KEY),
-            "pro_key_configured": bool(settings.MAXKB_PRO_API_KEY),
-            "standard_url": settings.MAXKB_STANDARD_BASE_URL,
+            "scene_optimize_key_configured": bool(settings.MAXKB_SCENE_OPTIMIZE_API_KEY),
+            "scene_optimize_url": settings.MAXKB_SCENE_OPTIMIZE_BASE_URL,
         },
         "openai": {
             "api_key_configured": bool(settings.OPENAI_API_KEY),

@@ -17,11 +17,7 @@ class _Settings:
     MIMO_API_KEY: str = os.getenv("MIMO_API_KEY", "")
     MIMO_API_BASE: str = os.getenv("MIMO_API_BASE", "")
 
-    # MaxKB
-    MAXKB_STANDARD_BASE_URL: str = os.getenv("MAXKB_STANDARD_BASE_URL", "")
-    MAXKB_STANDARD_API_KEY: str = os.getenv("MAXKB_STANDARD_API_KEY", "")
-    MAXKB_PRO_BASE_URL: str = os.getenv("MAXKB_PRO_BASE_URL", "")
-    MAXKB_PRO_API_KEY: str = os.getenv("MAXKB_PRO_API_KEY", "")
+    # MaxKB 场景优化专用智能体
     MAXKB_SCENE_OPTIMIZE_BASE_URL: str = os.getenv("MAXKB_SCENE_OPTIMIZE_BASE_URL", "")
     MAXKB_SCENE_OPTIMIZE_API_KEY: str = os.getenv("MAXKB_SCENE_OPTIMIZE_API_KEY", "")
 

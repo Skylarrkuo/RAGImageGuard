@@ -261,7 +261,7 @@ def api_full_pipeline_stream():
 
     # 使用场景优化专用智能体
     maxkb_base_url = settings.MAXKB_SCENE_OPTIMIZE_BASE_URL
-    maxkb_api_key = settings.MAXKB_SCENE_OPTIMIZE_API_KEY or settings.MAXKB_PRO_API_KEY
+    maxkb_api_key = settings.MAXKB_SCENE_OPTIMIZE_API_KEY
 
     def _stream_compliance(scene_desc: str):
         """流式合规分析：提取子问题 → 并行查询 MaxKB"""

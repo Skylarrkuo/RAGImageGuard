@@ -122,7 +122,7 @@ def extract_sub_queries(scene_description: str) -> list:
 def analyze_compliance_with_maxkb(scene_description: str, user_role: str = "tourist") -> dict:
     """将场景描述发送到 MaxKB 知识库进行合规分析（并行查询）"""
     base_url = settings.MAXKB_SCENE_OPTIMIZE_BASE_URL
-    api_key = settings.MAXKB_SCENE_OPTIMIZE_API_KEY or settings.MAXKB_PRO_API_KEY
+    api_key = settings.MAXKB_SCENE_OPTIMIZE_API_KEY
 
     if not api_key:
         return {"success": False, "error": "MaxKB API Key 未配置"}
