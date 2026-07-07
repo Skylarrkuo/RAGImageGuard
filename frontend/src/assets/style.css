@@ -780,8 +780,9 @@ body {
   max-width: 900px;
   margin: 0 auto;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1.5rem;
 }
 
 .scan-reveal {
@@ -789,6 +790,7 @@ body {
   overflow: hidden;
   border: 2px solid var(--fg);
   background: var(--fg);
+  width: 100%;
 }
 
 .scan-image {
@@ -847,6 +849,106 @@ body {
   text-transform: uppercase;
   color: var(--accent);
   animation: textFade 1s ease-in-out infinite;
+}
+
+/* ── Step 4: Before/After Compare Slider ── */
+.image-compare {
+  position: relative;
+  width: 100%;
+  border: 2px solid var(--fg);
+  cursor: ew-resize;
+  user-select: none;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.compare-layer {
+  width: 100%;
+}
+
+.compare-layer img {
+  width: 100%;
+  display: block;
+  pointer-events: none;
+}
+
+.compare-layer-before {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  /* clip-path set by inline style */
+}
+
+.compare-layer-after {
+  position: relative;
+  z-index: 0;
+}
+
+.compare-slider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.compare-slider-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #fff;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
+}
+
+.compare-slider-handle {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  background: #fff;
+  border: 2px solid var(--fg);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  pointer-events: auto;
+  z-index: 3;
+}
+
+.compare-slider-handle svg {
+  stroke: var(--fg);
+  flex-shrink: 0;
+}
+
+.compare-label {
+  position: absolute;
+  bottom: 0.75rem;
+  z-index: 4;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.55rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  padding: 0.2rem 0.6rem;
+  background: rgba(17, 17, 17, 0.75);
+  color: #fff;
+  pointer-events: none;
+}
+
+.compare-label-before {
+  left: 0.75rem;
+}
+
+.compare-label-after {
+  right: 0.75rem;
 }
 
 /* ── Step 4: Before/After Compare Slider ── */
@@ -964,7 +1066,6 @@ body {
 .generated-wrap {
   border: 2px solid var(--fg);
   width: 100%;
-  max-width: 900px;
   transition: all 200ms ease-out;
 }
 .generated-wrap:hover {
@@ -975,11 +1076,9 @@ body {
 
 /* ── Edit Summary Section ── */
 .edit-summary-section {
-  margin-top: 1.5rem;
   border: 1px solid var(--fg);
   background: var(--neutral-100);
   width: 100%;
-  max-width: 900px;
 }
 
 .summary-header {
