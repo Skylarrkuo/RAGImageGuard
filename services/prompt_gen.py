@@ -21,16 +21,17 @@ def generate_edit_prompt(scene_description: str, compliance_analysis: str) -> di
     prompt = f"""你是图片编辑专家。根据以下景区场景和合规分析结果，生成一个用于 AI 改图的编辑提示词。
 
 【场景描述】
-{scene_description[:300]}
+{scene_description}
 
 【合规分析结果】
-{compliance_analysis[:2000]}
+{compliance_analysis}
 
 要求：
 1. 提示词用于对原图进行局部修改，保持原图整体构图不变
-2. 针对上述合规问题，描述需要修改的内容（如：替换不合规标识、补充缺失设施、修正文字错误等）
-3. 用中文撰写，150字以内
-4. 直接输出提示词正文，不要加"提示词："等前缀，不要解释
+2. 针对上述合规问题，详细描述每一项需要修改的内容（如：替换不合规标识、补充缺失设施、修正文字错误等），确保所有合规问题都被覆盖
+3. 如果场景描述中提到了路人(包括电动车等骑行工具)、游客或无关人员，在提示词中明确要求将他们移除，使画面更干净专业
+4. 用中文撰写，描述要具体、完整，不限字数
+5. 直接输出提示词正文，不要加"提示词："等前缀，不要解释
 
 编辑提示词："""
 
@@ -48,7 +49,7 @@ def generate_edit_prompt(scene_description: str, compliance_analysis: str) -> di
                 json={
                     "model": "mimo-v2.5",
                     "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 500,
+                    "max_tokens": 10000,
                     "temperature": 0.5,
                 },
                 timeout=60,
