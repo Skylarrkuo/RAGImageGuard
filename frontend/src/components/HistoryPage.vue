@@ -221,10 +221,10 @@ function truncate(text, len) {
   return text.length > len ? text.slice(0, len) + '…' : text
 }
 
-function thumbUrl(filename) {
-  // original_abc123.jpg → thumb_original_abc123.jpg
-  const base = filename.replace(/\.[^.]+$/, '')
-  return '/images/thumb_' + base + '.jpg'
+function thumbUrl(filepath) {
+  // original/abc123.jpg → /images/thumb/thumb_abc123.jpg
+  const base = filepath.replace(/^.*\//, '').replace(/\.[^.]+$/, '')
+  return '/images/thumb/thumb_' + base + '.jpg'
 }
 
 function renderMarkdown(text) {

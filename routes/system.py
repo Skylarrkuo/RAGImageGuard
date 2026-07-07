@@ -14,10 +14,13 @@ system_bp = Blueprint("system", __name__)
 UPLOAD_DIR = Path(__file__).resolve().parent.parent / "data" / "uploads" / "images"
 
 
-@system_bp.route("/images/<filename>")
-def serve_image(filename):
-    """提供上传/生成的图片"""
-    file_path = UPLOAD_DIR / filename
+@system_bp.route("/images/<path:filepath>")
+def serve_image(filepath):
+    """提供上传/生成的图片（支持子目录路径，如 original/abc.jpg）"""
+    file_path = (UPLOAD_DIR / filepath).resolve()
+    # 安全校验：防止目录遍历
+    if not str(file_path).startswith(str(UPLOAD_DIR.resolve())):
+        return jsonify({"error": "非法路径"}), 403
     if not file_path.exists():
         return jsonify({"error": "图片不存在"}), 404
     mime = get_mime(file_path.suffix.lstrip("."))

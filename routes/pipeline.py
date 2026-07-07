@@ -24,21 +24,31 @@ pipeline_bp = Blueprint("pipeline", __name__)
 # 线程池
 executor = ThreadPoolExecutor(max_workers=4)
 
-# 图片保存目录
+# 图片保存目录（按类别分子目录）
 UPLOAD_DIR = Path(__file__).resolve().parent.parent / "data" / "uploads" / "images"
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+IMAGE_SUBDIRS = ("original", "generated", "refined", "thumb")
+for _sub in IMAGE_SUBDIRS:
+    (UPLOAD_DIR / _sub).mkdir(parents=True, exist_ok=True)
 
 
-def _save_with_thumbnail(filename: str, image_bytes: bytes):
-    """保存原图 + 缩略图（thumb_ 前缀，长边 400px，JPEG）"""
-    save_path = UPLOAD_DIR / filename
+def _save_with_thumbnail(filename: str, image_bytes: bytes, subdir: str = "original"):
+    """保存图片到指定子目录 + 在 thumb/ 下生成缩略图
+
+    返回形如 "original/abc123.jpg" 的相对路径，可直接拼接 /images/ 前缀访问。
+    """
+    save_dir = UPLOAD_DIR / subdir
+    save_dir.mkdir(parents=True, exist_ok=True)
+    save_path = save_dir / filename
     save_path.write_bytes(image_bytes)
+    # 缩略图统一放 thumb/ 目录
     try:
         thumb_bytes = create_thumbnail(image_bytes)
-        thumb_path = UPLOAD_DIR / f"thumb_{filename.rsplit('.', 1)[0]}.jpg"
+        stem = filename.rsplit(".", 1)[0]
+        thumb_path = UPLOAD_DIR / "thumb" / f"thumb_{stem}.jpg"
         thumb_path.write_bytes(thumb_bytes)
     except Exception as e:
         logger.warning(f"[Pipeline] 缩略图生成失败: {e}")
+    return f"{subdir}/{filename}"
 
 
 # ------------------------------------------------------------
@@ -128,8 +138,8 @@ def api_generate_image():
     if result.get("success"):
         # 保存生成的图片 + 缩略图
         filename = f"generated_{uuid.uuid4().hex[:8]}.png"
-        _save_with_thumbnail(filename, result["image_bytes"])
-        result["image_url"] = f"/images/{filename}"
+        rel_path = _save_with_thumbnail(filename, result["image_bytes"], subdir="generated")
+        result["image_url"] = f"/images/{rel_path}"
         del result["image_bytes"]
 
     return jsonify(result)
@@ -161,15 +171,15 @@ def api_refine_image():
 
     if result.get("success"):
         filename = f"refined_{uuid.uuid4().hex[:8]}.png"
-        _save_with_thumbnail(filename, result["image_bytes"])
-        result["image_url"] = f"/images/{filename}"
+        rel_path = _save_with_thumbnail(filename, result["image_bytes"], subdir="refined")
+        result["image_url"] = f"/images/{rel_path}"
         del result["image_bytes"]
 
         # 更新历史记录
         if history_id:
             update_history(history_id, {
                 "refine_prompt": prompt,
-                "refined_image": filename,
+                "refined_image": rel_path,
                 "status": "refined",
             })
 
@@ -198,8 +208,8 @@ def api_full_pipeline():
 
     # 保存原图
     original_filename = f"original_{uuid.uuid4().hex[:8]}.{image_format}"
-    _save_with_thumbnail(original_filename, image_bytes)
-    original_url = f"/images/{original_filename}"
+    original_rel = _save_with_thumbnail(original_filename, image_bytes, subdir="original")
+    original_url = f"/images/{original_rel}"
 
     results = {"original_url": original_url, "steps": {}}
 
@@ -245,11 +255,12 @@ def api_full_pipeline():
     results["steps"]["image_edit"] = {"time_ms": int((time.time() - t4) * 1000)}
     logger.info(f"[Pipeline] Step 4 完成 | 耗时: {results['steps']['image_edit']['time_ms']}ms | success={image_result.get('success')}")
 
+    gen_rel = None
     if image_result.get("success"):
         gen_filename = f"generated_{uuid.uuid4().hex[:8]}.png"
-        _save_with_thumbnail(gen_filename, image_result["image_bytes"])
+        gen_rel = _save_with_thumbnail(gen_filename, image_result["image_bytes"], subdir="generated")
         results["steps"]["image_edit"]["success"] = True
-        results["steps"]["image_edit"]["image_url"] = f"/images/{gen_filename}"
+        results["steps"]["image_edit"]["image_url"] = f"/images/{gen_rel}"
     else:
         results["steps"]["image_edit"]["success"] = False
         results["steps"]["image_edit"]["error"] = image_result.get("error")
@@ -263,8 +274,8 @@ def api_full_pipeline():
         "id": uuid.uuid4().hex[:12],
         "created_at": now.isoformat(timespec="seconds"),
         "mode": "full",
-        "original_image": original_filename,
-        "generated_image": None,
+        "original_image": original_rel,
+        "generated_image": gen_rel,
         "scene_description": scene_description if recognize_result.get("success") else None,
         "compliance_analysis": compliance_result.get("analysis") if compliance_result.get("success") else None,
         "compliance_queries": [],
@@ -279,9 +290,6 @@ def api_full_pipeline():
         },
         "status": "completed" if results["steps"].get("image_edit", {}).get("success") else "partial",
     }
-    gen_img = results["steps"].get("image_edit", {}).get("image_url")
-    if gen_img:
-        record["generated_image"] = gen_img.split("/")[-1]
     save_history(record)
 
     return jsonify(results)
@@ -309,8 +317,8 @@ def api_full_pipeline_stream():
 
     # 保存原图 + 缩略图
     original_filename = f"original_{uuid.uuid4().hex[:8]}.{image_format}"
-    _save_with_thumbnail(original_filename, image_bytes)
-    original_url = f"/images/{original_filename}"
+    original_rel = _save_with_thumbnail(original_filename, image_bytes, subdir="original")
+    original_url = f"/images/{original_rel}"
 
     # 使用场景优化专用智能体
     maxkb_base_url = settings.MAXKB_SCENE_OPTIMIZE_BASE_URL
@@ -354,7 +362,7 @@ def api_full_pipeline_stream():
             "id": uuid.uuid4().hex[:12],
             "created_at": datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="seconds"),
             "mode": "full",
-            "original_image": original_filename,
+            "original_image": original_rel,
             "generated_image": None,
             "scene_description": None,
             "compliance_analysis": None,
@@ -456,10 +464,10 @@ def api_full_pipeline_stream():
         hist["step_times"]["step4_ms"] = step_data["time_ms"]
         if image_result.get("success"):
             gen_filename = f"generated_{uuid.uuid4().hex[:8]}.png"
-            _save_with_thumbnail(gen_filename, image_result["image_bytes"])
+            gen_rel = _save_with_thumbnail(gen_filename, image_result["image_bytes"], subdir="generated")
             step_data["success"] = True
-            step_data["image_url"] = f"/images/{gen_filename}"
-            hist["generated_image"] = gen_filename
+            step_data["image_url"] = f"/images/{gen_rel}"
+            hist["generated_image"] = gen_rel
             hist["status"] = "completed"
         else:
             step_data["success"] = False
