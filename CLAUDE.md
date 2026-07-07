@@ -15,17 +15,19 @@
 | **AI 视觉** | MiMo 2.5（场景识别 + 提示词生成） |
 | **RAG 知识库** | MaxKB（国家标准检索） |
 | **图片编辑** | OpenAI GPT-image-2 |
+| **图片处理** | Pillow（尺寸检测 + 缩略图生成） |
 
 ## 核心业务流程
 
 ```
-上传图片 → [Step 1] MiMo 视觉识别 → [Step 2] MaxKB 合规分析 → [Step 3] 生成提示词 → [Step 4] GPT-image 改图
+上传图片 → [Step 1] MiMo 视觉识别 → [Step 2] MaxKB 合规分析 → [Step 3] 生成提示词 → [Step 4] GPT-image 改图 → [Step 5] 补充编辑（可选）
 ```
 
-1. **场景识别**：调用 MiMo 2.5 视觉模型，识别景区图片中的场景类型、标识标牌、基础设施、安全设施等
-2. **合规分析**：从场景描述提取子问题，并行查询 MaxKB 知识库获取国家标准合规判断
-3. **提示词生成**：基于合规分析结果，AI 生成图片编辑提示词（保持构图，只修改不合规部分）
-4. **智能改图**：调用 GPT-image-2 API 生成修复后的图片
+1. **场景识别**：调用 MiMo 2.5 视觉模型，按 11 个维度全面识别景区图片（场景类型、标识标牌、基础设施、安全设施、无障碍设施、建筑装饰、车辆与交通、人员、植物与自然、杂物与遮挡物、画面边缘与其他），max_tokens=4000
+2. **合规分析**：从场景描述提取 4-5 个子问题（双 prompt 策略 + 3 次重试），携带完整场景描述并行查询 MaxKB 知识库获取国家标准合规判断
+3. **提示词生成**：基于完整合规分析结果（不截断），AI 生成图片编辑提示词，自动包含移除无关路人的指令，max_tokens=10000
+4. **智能改图**：自动检测原图宽高比，选择最接近的 GPT-image-2 尺寸（竖屏→1024x1536，横屏→1536x1024，方形→1024x1024）
+5. **补充编辑**：用户手动输入修正提示词，对 Step 4 生成的图片进行二次精修，结果保存到历史记录
 
 ## 目录结构
 
@@ -36,30 +38,36 @@ RAG_PNG/
 │   └── settings.py         # 环境变量配置加载
 ├── core/
 │   ├── logging.py          # 全局日志配置 + logger 导出
-│   └── utils.py            # 通用工具函数（图片格式检测、MIME 映射）
+│   └── utils.py            # 通用工具（格式检测、MIME 映射、尺寸计算、缩略图生成）
 ├── services/
-│   ├── mimo.py             # Step 1: MiMo 视觉识别
-│   ├── maxkb.py            # Step 2: MaxKB 合规分析（含子问题提取 + 并行查询）
-│   ├── prompt_gen.py       # Step 3: 改图提示词生成
-│   ├── image_edit.py       # Step 4: GPT-Image 图片编辑
-│   └── history.py          # 历史记录 JSON 文件存储
+│   ├── mimo.py             # Step 1: MiMo 视觉识别（11 维度全面描述）
+│   ├── maxkb.py            # Step 2: MaxKB 合规分析（子问题提取 + 重试 + 并行查询）
+│   ├── prompt_gen.py       # Step 3: 改图提示词生成（完整内容、移除路人）
+│   ├── image_edit.py       # Step 4: GPT-Image 图片编辑（自动比例检测）
+│   └── history.py          # 历史记录 JSON 存储（save + update）
 ├── routes/
 │   ├── __init__.py         # Blueprint 注册中心（register_all_blueprints）
-│   ├── pipeline.py         # 流水线路由（识别、合规、提示词、改图、完整流水线、SSE）
+│   ├── pipeline.py         # 流水线路由（5 步流程、SSE 流式、补充编辑、缩略图生成）
 │   ├── history.py          # 历史记录 CRUD 路由
-│   └── system.py           # 系统路由（配置检查、图片服务）
+│   └── system.py           # 系统路由（配置检查、图片服务，支持子目录路径）
 ├── frontend/
-│   ├── src/
-│   │   ├── api/index.js    # API 调用封装
-│   │   ├── App.vue         # 主应用（页面路由）
-│   │   └── components/
-│   │       ├── UploadPage.vue      # 上传页面
-│   │       ├── Workspace.vue       # 工作台（流程控制）
-│   │       ├── PipelineSidebar.vue # 侧边栏步骤节点
-│   │       ├── ContentPanel.vue    # 内容展示面板
-│   │       └── SummaryBar.vue      # 耗时统计栏
-│   └── package.json
-├── data/uploads/images/    # 上传/生成的图片存储
+│   └── src/
+│       ├── api/index.js    # API 调用封装（含 refineImage）
+│       ├── App.vue         # 主应用（上传 / 工作台 / 历史 三页切换）
+│       └── components/
+│           ├── UploadPage.vue      # 上传页面
+│           ├── Workspace.vue       # 工作台（5 步流程控制）
+│           ├── PipelineSidebar.vue # 侧边栏步骤节点
+│           ├── ContentPanel.vue    # 内容展示 + 补充编辑输入
+│           ├── SummaryBar.vue      # 耗时统计栏
+│           └── HistoryPage.vue     # 历史记录列表 + 详情对比
+├── data/
+│   ├── history.json        # 历史记录文件
+│   └── uploads/images/     # 图片存储（按类别分目录）
+│       ├── original/       # 上传的原始图片
+│       ├── generated/      # Step 4 生成的图片
+│       ├── refined/        # Step 5 补充编辑的图片
+│       └── thumb/          # 缩略图（长边 400px，JPEG）
 ├── .env                    # 环境变量（不提交）
 ├── .env.example            # 环境变量模板
 └── requirements.txt        # Python 依赖
@@ -74,12 +82,13 @@ RAG_PNG/
 | `/api/analyze-compliance` | POST | Step 2: 合规分析 |
 | `/api/generate-prompt` | POST | Step 3: 生成编辑提示词 |
 | `/api/generate-image` | POST | Step 4: AI 改图 |
+| `/api/refine-image` | POST | Step 5: 补充编辑（图片 + 提示词 + history_id） |
 | `/api/full-pipeline` | POST | 完整流水线（同步） |
 | `/api/full-pipeline-stream` | POST | 完整流水线（SSE 实时推送） |
 | `/api/history` | GET | 历史记录列表 |
 | `/api/history/<record_id>` | GET | 历史记录详情 |
 | `/api/history/<record_id>` | DELETE | 删除历史记录 |
-| `/images/<filename>` | GET | 获取上传/生成的图片 |
+| `/images/<path:filepath>` | GET | 获取图片（支持子目录，如 `original/abc.jpg`） |
 
 ## 环境变量
 
@@ -121,22 +130,32 @@ npm run dev   # 运行在 http://localhost:5173
 - **Blueprint 模块化**：`pipeline_bp`、`history_bp`、`system_bp` 分别注册
 - 使用 `ThreadPoolExecutor(max_workers=4)` 处理并发请求（定义在 `routes/pipeline.py`）
 - MaxKB 合规分析采用 **4 路并行查询**：先用 MiMo 提取 4-5 个子问题（覆盖标识、安全、无障碍、消防、卫生等维度），再并行查询知识库
-- SSE 流式端点 (`/api/full-pipeline-stream`) 支持实时推送每个步骤进度
+- 子问题提取采用 **双 prompt 策略**：详细版 → 精简版 → 兜底问题，`_call_mimo()` 带 3 次重试
+- SSE 流式端点 (`/api/full-pipeline-stream`) 支持实时推送每个步骤进度，`done` 事件携带 `history_id`
 - 图片格式自动检测：支持 jpg/png/webp/gif
-- 生成的图片保存在 `data/uploads/images/` 目录
+- **图片存储按类别分目录**：`original/`、`generated/`、`refined/`、`thumb/`
+- **缩略图自动生成**：`_save_with_thumbnail()` 保存原图时同步生成长边 400px 的 JPEG 缩略图
+- **图片比例自适应**：`pick_gpt_image_size()` 根据原图宽高比选择 GPT-image-2 最接近的尺寸
+- 历史记录存储在 `data/history.json`，支持 `save_history()` 和 `update_history()` 两种操作
 
 ### 前端 (Vue 3)
 
-- 两页结构：`UploadPage`（上传）→ `Workspace`（工作台）
+- 三页结构：`UploadPage`（上传）→ `Workspace`（工作台）→ `HistoryPage`（历史记录）
+- 工作台支持 **5 步流程**：识别 → 合规分析 → 提示词生成 → 图片编辑 → 补充编辑
 - 支持 3 种运行模式：`full`（完整流水线）、`step1`（仅识别）、`step2`（仅合规分析）
 - SSE 流式解析：`consumeSSEStream()` 函数处理服务端推送事件
-- 步骤重试：每个步骤失败后可单独重试，无需重新开始
+- 步骤重试：每个步骤失败后可单独重试，无需重新开始（含 Step 5）
 - Markdown 渲染：合规分析结果使用 `marked` 库渲染
+- **历史记录**：列表页加载缩略图（`thumbUrl()` 函数），详情页显示原图/生成图对比滑块
+- **补充编辑**：ContentPanel 中 Step 5 输入区域（预览图 + 文本框 + 按钮），结果用对比滑块展示
+- 图片居中显示，max-width 900px
 
 ## 开发注意事项
 
 1. **API 调用超时**：MiMo 识别 120s，MaxKB 查询 300s，GPT-image 编辑 300s
 2. **代理设置**：OpenAI 客户端显式禁用代理 (`proxy=None`)
 3. **并发控制**：MaxKB 并行查询限制为 4 路
-4. **文件命名**：上传图片使用 `original_{uuid}.{ext}`，生成图片使用 `generated_{uuid}.png`
+4. **文件命名**：上传图片 `original/{uuid}.{ext}`，生成图片 `generated/{uuid}.png`，精修图片 `refined/{uuid}.png`，缩略图 `thumb/thumb_{uuid}.jpg`
 5. **前端开发**：API 基础路径为空字符串（同源），Vite 开发服务器代理到后端 8001 端口
+6. **图片安全**：`/images/<path:filepath>` 路由含目录遍历防护（`resolve()` + 前缀校验）
+7. **Pillow 依赖**：`requirements.txt` 中 `Pillow>=10.0.0`，用于图片尺寸检测和缩略图生成

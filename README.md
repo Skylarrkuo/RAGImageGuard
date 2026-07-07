@@ -1,13 +1,14 @@
 # RAG_PNG — 景区图片合规检查 + AI 改图
 
-基于 RAG（检索增强生成）的旅游景区图片合规检查系统，支持 AI 智能改图。
+基于 RAG（检索增强生成）的旅游景区图片合规检查系统，通过 AI 视觉识别景区图片内容，检索国家标准知识库进行合规分析，并自动修复不合规内容。
 
 ## 功能
 
-1. **图片识别** — 调用 MiMo 2.5 视觉模型识别景区图片内容
-2. **合规分析** — 通过 MaxKB 知识库检索国家标准进行合规判断
-3. **提示词生成** — AI 生成图片编辑提示词
-4. **智能改图** — 调用 GPT-image API 自动修复不合规内容
+1. **图片识别** — MiMo 2.5 视觉模型全面识别景区图片（11 个维度：场景、标识、设施、安全、无障碍、建筑、交通、人员、植物、杂物、边缘）
+2. **合规分析** — 从场景描述提取子问题，并行查询 MaxKB 知识库获取国家标准合规判断
+3. **提示词生成** — 基于完整合规分析结果，AI 生成图片编辑提示词（自动移除无关路人）
+4. **智能改图** — GPT-image-2 自动检测图片比例，生成对应尺寸的修复图片
+5. **补充编辑** — 用户可手动输入修正提示词，对已修改图片进行二次精修
 
 ## 项目结构
 
@@ -18,19 +19,38 @@ RAG_PNG/
 │   └── settings.py         # 环境变量配置加载
 ├── core/
 │   ├── logging.py          # 全局日志配置
-│   └── utils.py            # 通用工具函数
+│   └── utils.py            # 通用工具（格式检测、尺寸计算、缩略图生成）
 ├── services/
 │   ├── mimo.py             # Step 1: MiMo 视觉识别
-│   ├── maxkb.py            # Step 2: MaxKB 合规分析
-│   ├── prompt_gen.py       # Step 3: 提示词生成
-│   ├── image_edit.py       # Step 4: GPT-Image 图片编辑
-│   └── history.py          # 历史记录存储
+│   ├── maxkb.py            # Step 2: MaxKB 合规分析（子问题提取 + 并行查询）
+│   ├── prompt_gen.py       # Step 3: 改图提示词生成
+│   ├── image_edit.py       # Step 4: GPT-Image 图片编辑（自动比例检测）
+│   └── history.py          # 历史记录 JSON 存储（含更新功能）
 ├── routes/
-│   ├── pipeline.py         # 流水线路由（识别、合规、改图、SSE）
+│   ├── __init__.py         # Blueprint 注册中心
+│   ├── pipeline.py         # 流水线路由（5 步流程、SSE 流式、补充编辑）
 │   ├── history.py          # 历史记录 CRUD
-│   └── system.py           # 配置检查、图片服务
-├── frontend/               # Vue 3 前端
-└── data/uploads/images/    # 上传/生成的图片
+│   └── system.py           # 配置检查、图片服务（支持子目录）
+├── frontend/
+│   └── src/
+│       ├── api/index.js    # API 调用封装
+│       ├── App.vue         # 主应用（上传 / 工作台 / 历史 三页切换）
+│       └── components/
+│           ├── UploadPage.vue      # 上传页面
+│           ├── Workspace.vue       # 工作台（5 步流程控制）
+│           ├── PipelineSidebar.vue # 侧边栏步骤节点
+│           ├── ContentPanel.vue    # 内容展示 + 补充编辑输入
+│           ├── SummaryBar.vue      # 耗时统计栏
+│           └── HistoryPage.vue     # 历史记录列表 + 详情对比
+├── data/
+│   └── uploads/images/     # 图片存储（按类别分目录）
+│       ├── original/       # 上传的原始图片
+│       ├── generated/      # Step 4 生成的图片
+│       ├── refined/        # Step 5 补充编辑的图片
+│       └── thumb/          # 缩略图（长边 400px）
+├── .env                    # 环境变量（不提交）
+├── .env.example            # 环境变量模板
+└── requirements.txt        # Python 依赖
 ```
 
 ## 快速开始
@@ -73,18 +93,24 @@ npm run dev
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
-| `/api/config-check` | GET | 检查配置 |
-| `/api/recognize` | POST | 图片识别 |
-| `/api/analyze-compliance` | POST | 合规分析 |
-| `/api/generate-prompt` | POST | 生成编辑提示词 |
-| `/api/generate-image` | POST | AI 改图 |
-| `/api/full-pipeline` | POST | 完整流水线 |
-| `/api/full-pipeline-stream` | POST | 完整流水线（SSE） |
+| `/api/config-check` | GET | 检查配置是否完整 |
+| `/api/recognize` | POST | Step 1: 图片识别 |
+| `/api/analyze-compliance` | POST | Step 2: 合规分析 |
+| `/api/generate-prompt` | POST | Step 3: 生成编辑提示词 |
+| `/api/generate-image` | POST | Step 4: AI 改图 |
+| `/api/refine-image` | POST | Step 5: 补充编辑 |
+| `/api/full-pipeline` | POST | 完整流水线（同步） |
+| `/api/full-pipeline-stream` | POST | 完整流水线（SSE 实时推送） |
 | `/api/history` | GET | 历史记录列表 |
-| `/images/<filename>` | GET | 获取图片 |
+| `/api/history/<record_id>` | GET | 历史记录详情 |
+| `/api/history/<record_id>` | DELETE | 删除历史记录 |
+| `/images/<path>` | GET | 获取图片（支持子目录） |
 
 ## 技术栈
 
-- **后端**: Flask + OpenAI / MiMo / MaxKB API
-- **前端**: Vue 3 + Vite
-- **知识库**: MaxKB (RAG)
+- **后端**: Flask 3.x + Python 3.11
+- **前端**: Vue 3.4 + Vite 5.x
+- **AI 视觉**: MiMo 2.5（场景识别 + 提示词生成）
+- **RAG 知识库**: MaxKB（国家标准检索）
+- **图片编辑**: OpenAI GPT-image-2
+- **图片处理**: Pillow（尺寸检测 + 缩略图生成）
