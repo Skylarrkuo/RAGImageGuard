@@ -10,6 +10,17 @@ def get_image_dimensions(image_bytes: bytes) -> tuple[int, int]:
     return img.size  # (width, height)
 
 
+def create_thumbnail(image_bytes: bytes, max_size: int = 400) -> bytes:
+    """生成缩略图，保持比例，长边不超过 max_size 像素，返回 JPEG 字节"""
+    img = Image.open(io.BytesIO(image_bytes))
+    img.thumbnail((max_size, max_size), Image.LANCZOS)
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=75, optimize=True)
+    return buf.getvalue()
+
+
 def pick_gpt_image_size(width: int, height: int) -> str:
     """根据图片宽高比选择 GPT-image-2 支持的最接近尺寸
 

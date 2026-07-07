@@ -35,7 +35,7 @@
             @click="viewDetail(record)"
           >
             <div class="history-card-image">
-              <img v-if="record.original_image" :src="'/images/' + record.original_image" alt="" />
+              <img v-if="record.original_image" :src="thumbUrl(record.original_image)" alt="" @error="$event.target.src='/images/'+record.original_image" />
               <div v-else class="history-card-no-img">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
               </div>
@@ -219,6 +219,12 @@ function statusLabel(status) {
 function truncate(text, len) {
   if (!text) return '无描述'
   return text.length > len ? text.slice(0, len) + '…' : text
+}
+
+function thumbUrl(filename) {
+  // original_abc123.jpg → thumb_original_abc123.jpg
+  const base = filename.replace(/\.[^.]+$/, '')
+  return '/images/thumb_' + base + '.jpg'
 }
 
 function renderMarkdown(text) {

@@ -10,7 +10,7 @@ from pathlib import Path
 from flask import Blueprint, request, Response, jsonify, stream_with_context
 
 from core.logging import logger
-from core.utils import detect_image_format
+from core.utils import detect_image_format, create_thumbnail
 from services.mimo import recognize_with_mimo
 from services.maxkb import analyze_compliance_with_maxkb, extract_sub_queries, _query_maxkb_single
 from services.prompt_gen import generate_edit_prompt
@@ -27,6 +27,18 @@ executor = ThreadPoolExecutor(max_workers=4)
 # 图片保存目录
 UPLOAD_DIR = Path(__file__).resolve().parent.parent / "data" / "uploads" / "images"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _save_with_thumbnail(filename: str, image_bytes: bytes):
+    """保存原图 + 缩略图（thumb_ 前缀，长边 400px，JPEG）"""
+    save_path = UPLOAD_DIR / filename
+    save_path.write_bytes(image_bytes)
+    try:
+        thumb_bytes = create_thumbnail(image_bytes)
+        thumb_path = UPLOAD_DIR / f"thumb_{filename.rsplit('.', 1)[0]}.jpg"
+        thumb_path.write_bytes(thumb_bytes)
+    except Exception as e:
+        logger.warning(f"[Pipeline] 缩略图生成失败: {e}")
 
 
 # ------------------------------------------------------------
@@ -114,10 +126,9 @@ def api_generate_image():
     logger.info(f"[API] /api/generate-image 完成 | success={result.get('success')}")
 
     if result.get("success"):
-        # 保存生成的图片
+        # 保存生成的图片 + 缩略图
         filename = f"generated_{uuid.uuid4().hex[:8]}.png"
-        save_path = UPLOAD_DIR / filename
-        save_path.write_bytes(result["image_bytes"])
+        _save_with_thumbnail(filename, result["image_bytes"])
         result["image_url"] = f"/images/{filename}"
         del result["image_bytes"]
 
@@ -150,8 +161,7 @@ def api_refine_image():
 
     if result.get("success"):
         filename = f"refined_{uuid.uuid4().hex[:8]}.png"
-        save_path = UPLOAD_DIR / filename
-        save_path.write_bytes(result["image_bytes"])
+        _save_with_thumbnail(filename, result["image_bytes"])
         result["image_url"] = f"/images/{filename}"
         del result["image_bytes"]
 
@@ -188,7 +198,7 @@ def api_full_pipeline():
 
     # 保存原图
     original_filename = f"original_{uuid.uuid4().hex[:8]}.{image_format}"
-    (UPLOAD_DIR / original_filename).write_bytes(image_bytes)
+    _save_with_thumbnail(original_filename, image_bytes)
     original_url = f"/images/{original_filename}"
 
     results = {"original_url": original_url, "steps": {}}
@@ -237,8 +247,7 @@ def api_full_pipeline():
 
     if image_result.get("success"):
         gen_filename = f"generated_{uuid.uuid4().hex[:8]}.png"
-        gen_path = UPLOAD_DIR / gen_filename
-        gen_path.write_bytes(image_result["image_bytes"])
+        _save_with_thumbnail(gen_filename, image_result["image_bytes"])
         results["steps"]["image_edit"]["success"] = True
         results["steps"]["image_edit"]["image_url"] = f"/images/{gen_filename}"
     else:
@@ -298,9 +307,9 @@ def api_full_pipeline_stream():
     image_format = detect_image_format(image.filename or "", image.content_type or "")
     logger.info(f"[SSE] 图片: {image.filename} ({len(image_bytes)} bytes, {image_format})")
 
-    # 保存原图
+    # 保存原图 + 缩略图
     original_filename = f"original_{uuid.uuid4().hex[:8]}.{image_format}"
-    (UPLOAD_DIR / original_filename).write_bytes(image_bytes)
+    _save_with_thumbnail(original_filename, image_bytes)
     original_url = f"/images/{original_filename}"
 
     # 使用场景优化专用智能体
@@ -447,7 +456,7 @@ def api_full_pipeline_stream():
         hist["step_times"]["step4_ms"] = step_data["time_ms"]
         if image_result.get("success"):
             gen_filename = f"generated_{uuid.uuid4().hex[:8]}.png"
-            (UPLOAD_DIR / gen_filename).write_bytes(image_result["image_bytes"])
+            _save_with_thumbnail(gen_filename, image_result["image_bytes"])
             step_data["success"] = True
             step_data["image_url"] = f"/images/{gen_filename}"
             hist["generated_image"] = gen_filename
