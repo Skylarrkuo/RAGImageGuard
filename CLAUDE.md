@@ -31,9 +31,23 @@
 
 ```
 RAG_PNG/
-├── app.py                  # Flask 后端主文件（所有 API 端点）
+├── app.py                  # Flask 启动入口（应用工厂 create_app()）
 ├── config/
 │   └── settings.py         # 环境变量配置加载
+├── core/
+│   ├── logging.py          # 全局日志配置 + logger 导出
+│   └── utils.py            # 通用工具函数（图片格式检测、MIME 映射）
+├── services/
+│   ├── mimo.py             # Step 1: MiMo 视觉识别
+│   ├── maxkb.py            # Step 2: MaxKB 合规分析（含子问题提取 + 并行查询）
+│   ├── prompt_gen.py       # Step 3: 改图提示词生成
+│   ├── image_edit.py       # Step 4: GPT-Image 图片编辑
+│   └── history.py          # 历史记录 JSON 文件存储
+├── routes/
+│   ├── __init__.py         # Blueprint 注册中心（register_all_blueprints）
+│   ├── pipeline.py         # 流水线路由（识别、合规、提示词、改图、完整流水线、SSE）
+│   ├── history.py          # 历史记录 CRUD 路由
+│   └── system.py           # 系统路由（配置检查、图片服务）
 ├── frontend/
 │   ├── src/
 │   │   ├── api/index.js    # API 调用封装
@@ -62,6 +76,9 @@ RAG_PNG/
 | `/api/generate-image` | POST | Step 4: AI 改图 |
 | `/api/full-pipeline` | POST | 完整流水线（同步） |
 | `/api/full-pipeline-stream` | POST | 完整流水线（SSE 实时推送） |
+| `/api/history` | GET | 历史记录列表 |
+| `/api/history/<record_id>` | GET | 历史记录详情 |
+| `/api/history/<record_id>` | DELETE | 删除历史记录 |
 | `/images/<filename>` | GET | 获取上传/生成的图片 |
 
 ## 环境变量
@@ -99,11 +116,14 @@ npm run dev   # 运行在 http://localhost:5173
 
 ## 关键实现细节
 
-### 后端 (app.py)
+### 后端架构
 
-- 使用 `ThreadPoolExecutor(max_workers=4)` 处理并发请求
+- **分层结构**：`core/`（基础设施）→ `services/`（业务逻辑）→ `routes/`（HTTP 端点）→ `app.py`（入口）
+- **应用工厂**：`create_app()` 函数便于测试和扩展
+- **Blueprint 模块化**：`pipeline_bp`、`history_bp`、`system_bp` 分别注册
+- 使用 `ThreadPoolExecutor(max_workers=4)` 处理并发请求（定义在 `routes/pipeline.py`）
 - MaxKB 合规分析采用 **4 路并行查询**：先用 MiMo 提取 4-5 个子问题（覆盖标识、安全、无障碍、消防、卫生等维度），再并行查询知识库
-- SSE 流式端点 (`/api-full-pipeline-stream`) 支持实时推送每个步骤进度
+- SSE 流式端点 (`/api/full-pipeline-stream`) 支持实时推送每个步骤进度
 - 图片格式自动检测：支持 jpg/png/webp/gif
 - 生成的图片保存在 `data/uploads/images/` 目录
 

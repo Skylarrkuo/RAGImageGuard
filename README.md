@@ -9,6 +9,30 @@
 3. **提示词生成** — AI 生成图片编辑提示词
 4. **智能改图** — 调用 GPT-image API 自动修复不合规内容
 
+## 项目结构
+
+```
+RAG_PNG/
+├── app.py                  # Flask 启动入口（应用工厂 create_app()）
+├── config/
+│   └── settings.py         # 环境变量配置加载
+├── core/
+│   ├── logging.py          # 全局日志配置
+│   └── utils.py            # 通用工具函数
+├── services/
+│   ├── mimo.py             # Step 1: MiMo 视觉识别
+│   ├── maxkb.py            # Step 2: MaxKB 合规分析
+│   ├── prompt_gen.py       # Step 3: 提示词生成
+│   ├── image_edit.py       # Step 4: GPT-Image 图片编辑
+│   └── history.py          # 历史记录存储
+├── routes/
+│   ├── pipeline.py         # 流水线路由（识别、合规、改图、SSE）
+│   ├── history.py          # 历史记录 CRUD
+│   └── system.py           # 配置检查、图片服务
+├── frontend/               # Vue 3 前端
+└── data/uploads/images/    # 上传/生成的图片
+```
+
 ## 快速开始
 
 ### 环境准备
@@ -56,6 +80,8 @@ npm run dev
 | `/api/generate-image` | POST | AI 改图 |
 | `/api/full-pipeline` | POST | 完整流水线 |
 | `/api/full-pipeline-stream` | POST | 完整流水线（SSE） |
+| `/api/history` | GET | 历史记录列表 |
+| `/images/<filename>` | GET | 获取图片 |
 
 ## 技术栈
 
