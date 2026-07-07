@@ -1,7 +1,5 @@
 """Step 3: 生成改图提示词 — 基于合规分析结果生成图片编辑提示词"""
 
-import re
-
 import requests
 
 from config.settings import settings
@@ -16,35 +14,17 @@ def generate_edit_prompt(scene_description: str, compliance_analysis: str) -> di
     if not api_key:
         return {"success": False, "error": "MIMO_API_KEY 未配置"}
 
-    # 从合规分析中提取关键违规点（去掉标准条文编号等冗余信息，保留问题描述和结论）
-    issues = []
-    for block in compliance_analysis.split("---"):
-        lines = [l.strip() for l in block.strip().split("\n") if l.strip()]
-        # 跳过纯标准编号行（如 GB/T xxx、GB xxx），保留有意义的描述
-        key_lines = []
-        for line in lines:
-            # 跳过标准引用行、空行、纯标点行
-            if re.match(r'^(GB|GB/T|根据|依据|按照|参考)\s*\d', line):
-                continue
-            if len(line) < 8:
-                continue
-            key_lines.append(line)
-        if key_lines:
-            # 取前2行作为该问题的摘要
-            issues.append("；".join(key_lines[:2]))
-    issues_summary = "\n".join(f"- {s}" for s in issues[:3]) if issues else compliance_analysis[:500]
-
-    logger.info(f"[Step3] 开始生成改图提示词 | 合规问题摘要: {len(issues_summary)} 字符")
+    logger.info(f"[Step3] 开始生成改图提示词 | 合规分析: {len(compliance_analysis)} 字符")
     logger.debug(f"[Step3] 场景描述:\n{scene_description[:300]}")
-    logger.debug(f"[Step3] 合规问题:\n{issues_summary}")
+    logger.debug(f"[Step3] 合规分析:\n{compliance_analysis[:500]}")
 
-    prompt = f"""你是图片编辑专家。根据以下景区场景和合规问题，生成一个用于 AI 改图的编辑提示词。
+    prompt = f"""你是图片编辑专家。根据以下景区场景和合规分析结果，生成一个用于 AI 改图的编辑提示词。
 
 【场景描述】
 {scene_description[:300]}
 
-【发现的合规问题】
-{issues_summary}
+【合规分析结果】
+{compliance_analysis[:2000]}
 
 要求：
 1. 提示词用于对原图进行局部修改，保持原图整体构图不变
