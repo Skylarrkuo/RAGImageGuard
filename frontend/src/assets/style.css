@@ -777,7 +777,11 @@ body {
 /* ── Step 4: Scan Reveal Animation ── */
 .compare-container {
   width: 100%;
-  max-width: 640px;
+  max-width: 900px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .scan-reveal {
@@ -854,6 +858,7 @@ body {
   user-select: none;
   overflow: hidden;
   line-height: 0;
+  max-width: 900px;
 }
 
 .compare-layer {
@@ -957,9 +962,9 @@ body {
 
 /* Generated image */
 .generated-wrap {
-  margin-top: 1rem;
   border: 2px solid var(--fg);
-  max-width: 600px;
+  width: 100%;
+  max-width: 900px;
   transition: all 200ms ease-out;
 }
 .generated-wrap:hover {
@@ -967,6 +972,66 @@ body {
   transform: translate(-2px, -2px);
 }
 .generated-wrap img { width: 100%; display: block; }
+
+/* ── Step 5: Refine Input ── */
+.refine-input-area {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.refine-preview {
+  width: 100%;
+  border: 2px solid var(--fg);
+  overflow: hidden;
+}
+
+.refine-preview img {
+  width: 100%;
+  display: block;
+}
+
+.refine-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.refine-textarea {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background: var(--bg-card);
+  border: 2px solid var(--fg);
+  color: var(--fg);
+  font-family: 'Noto Sans SC', 'Inter', sans-serif;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  resize: vertical;
+  transition: border-color 200ms;
+}
+
+.refine-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.refine-textarea::placeholder {
+  color: var(--neutral-400);
+}
+
+.refine-btn {
+  align-self: flex-start;
+  padding: 0.6rem 1.5rem;
+  font-size: 0.85rem;
+}
+
+.refine-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 
 /* ── Summary Bar ── */
 .summary-bar {

@@ -30,3 +30,16 @@ def save_history(record: dict):
     HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
     HISTORY_FILE.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
     logger.debug(f"[History] 保存成功，当前共 {len(history)} 条记录")
+
+
+def update_history(record_id: str, patch: dict):
+    """按 id 更新历史记录中的字段"""
+    history = load_history()
+    for record in history:
+        if record.get("id") == record_id:
+            record.update(patch)
+            HISTORY_FILE.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+            logger.debug(f"[History] 更新记录: id={record_id}, fields={list(patch.keys())}")
+            return True
+    logger.warning(f"[History] 未找到记录: id={record_id}")
+    return False

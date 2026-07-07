@@ -52,6 +52,18 @@ export async function generateImage(image, prompt) {
 }
 
 /**
+ * Step 5: 补充编辑
+ */
+export async function refineImage(image, prompt, historyId) {
+  const formData = new FormData()
+  formData.append('image', image)
+  formData.append('prompt', prompt)
+  if (historyId) formData.append('history_id', historyId)
+  const resp = await fetch(`${API_BASE}/api/refine-image`, { method: 'POST', body: formData })
+  return resp.json()
+}
+
+/**
  * SSE 流式完整流水线
  * 返回 ReadableStream reader，调用方自行解析 SSE 事件
  */

@@ -15,7 +15,7 @@ from services.mimo import recognize_with_mimo
 from services.maxkb import analyze_compliance_with_maxkb, extract_sub_queries, _query_maxkb_single
 from services.prompt_gen import generate_edit_prompt
 from services.image_edit import generate_edited_image
-from services.history import save_history
+from services.history import save_history, update_history
 
 from config.settings import settings
 
@@ -124,6 +124,48 @@ def api_generate_image():
     return jsonify(result)
 
 
+@pipeline_bp.route("/api/refine-image", methods=["POST"])
+def api_refine_image():
+    """Step 5: 补充编辑 — 用户手动输入修正提示词，对已修改图片进行二次编辑"""
+    logger.info("=" * 60)
+    logger.info("[API] POST /api/refine-image 收到请求")
+    image = request.files.get("image")
+    prompt = request.form.get("prompt", "")
+    history_id = request.form.get("history_id", "")
+
+    if not image:
+        return jsonify({"success": False, "error": "未上传图片"}), 400
+    if not prompt:
+        return jsonify({"success": False, "error": "缺少修正提示词"}), 400
+
+    image_bytes = image.read()
+    if not image_bytes:
+        return jsonify({"success": False, "error": "图片为空"}), 400
+
+    image_format = detect_image_format(image.filename or "", image.content_type or "")
+    logger.info(f"[API] 图片: {image.filename} ({len(image_bytes)} bytes, {image_format}) | 修正提示词: {prompt[:100]}...")
+    future = executor.submit(generate_edited_image, image_bytes, image_format, prompt)
+    result = future.result()
+    logger.info(f"[API] /api/refine-image 完成 | success={result.get('success')}")
+
+    if result.get("success"):
+        filename = f"refined_{uuid.uuid4().hex[:8]}.png"
+        save_path = UPLOAD_DIR / filename
+        save_path.write_bytes(result["image_bytes"])
+        result["image_url"] = f"/images/{filename}"
+        del result["image_bytes"]
+
+        # 更新历史记录
+        if history_id:
+            update_history(history_id, {
+                "refine_prompt": prompt,
+                "refined_image": filename,
+                "status": "refined",
+            })
+
+    return jsonify(result)
+
+
 # ------------------------------------------------------------
 # 完整流水线
 # ------------------------------------------------------------
@@ -218,6 +260,8 @@ def api_full_pipeline():
         "compliance_analysis": compliance_result.get("analysis") if compliance_result.get("success") else None,
         "compliance_queries": [],
         "edit_prompt": prompt_result.get("prompt") if prompt_result.get("success") else None,
+        "refine_prompt": None,
+        "refined_image": None,
         "step_times": {
             "step1_ms": results["steps"].get("recognize", {}).get("time_ms"),
             "step2_ms": results["steps"].get("compliance", {}).get("time_ms"),
@@ -266,7 +310,7 @@ def api_full_pipeline_stream():
     def _stream_compliance(scene_desc: str):
         """流式合规分析：提取子问题 → 并行查询 MaxKB"""
         sub_queries = extract_sub_queries(scene_desc)
-        queries = [f"请根据旅游景区相关国家标准回答：{sq}" for sq in sub_queries]
+        queries = [f"以下是景区场景描述：\n{scene_desc}\n\n请根据以上场景和旅游景区相关国家标准回答：{sq}" for sq in sub_queries]
         logger.info(f"[SSE-Compliance] 开始并行查询 MaxKB | 共 {len(queries)} 个问题")
 
         all_sources = []
@@ -307,6 +351,8 @@ def api_full_pipeline_stream():
             "compliance_analysis": None,
             "compliance_queries": [],
             "edit_prompt": None,
+            "refine_prompt": None,
+            "refined_image": None,
             "step_times": {},
             "status": "partial",
         }
@@ -330,7 +376,7 @@ def api_full_pipeline_stream():
 
         if not recognize_result.get("success"):
             _save_and_done()
-            yield f"data: {json.dumps({'type': 'done', 'total_time_ms': int((time.time() - t_total) * 1000)}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'total_time_ms': int((time.time() - t_total) * 1000), 'history_id': hist['id']}, ensure_ascii=False)}\n\n"
             return
 
         scene_description = recognize_result["description"]
@@ -368,7 +414,7 @@ def api_full_pipeline_stream():
         if not full_answer:
             yield f"data: {json.dumps({'type': 'step', 'step': 'compliance', 'time_ms': t2_ms, 'success': False, 'error': 'MaxKB 未返回有效回答'}, ensure_ascii=False)}\n\n"
             _save_and_done()
-            yield f"data: {json.dumps({'type': 'done', 'total_time_ms': int((time.time() - t_total) * 1000)}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'total_time_ms': int((time.time() - t_total) * 1000), 'history_id': hist['id']}, ensure_ascii=False)}\n\n"
             return
 
         hist["compliance_analysis"] = full_answer
@@ -386,7 +432,7 @@ def api_full_pipeline_stream():
 
         if not prompt_result.get("success"):
             _save_and_done()
-            yield f"data: {json.dumps({'type': 'done', 'total_time_ms': int((time.time() - t_total) * 1000)}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'total_time_ms': int((time.time() - t_total) * 1000), 'history_id': hist['id']}, ensure_ascii=False)}\n\n"
             return
 
         hist["edit_prompt"] = prompt_result.get("prompt")
@@ -414,7 +460,7 @@ def api_full_pipeline_stream():
         _save_and_done()
         total_ms = int((time.time() - t_total) * 1000)
         logger.info(f"[SSE] 全流程完成 | 总耗时: {total_ms}ms")
-        yield f"data: {json.dumps({'type': 'done', 'total_time_ms': total_ms}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type': 'done', 'total_time_ms': total_ms, 'history_id': hist['id']}, ensure_ascii=False)}\n\n"
 
     return Response(
         stream_with_context(generate()),

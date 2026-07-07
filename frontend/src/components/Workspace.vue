@@ -30,7 +30,9 @@
           :active-step="currentStep"
           :compliance-queries="complianceQueries"
           :step4-images="step4Images"
+          :step5-images="step5Images"
           @toggle-compliance="toggleCompliance"
+          @run-step5="runStep5"
         />
       </div>
 
@@ -57,7 +59,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { marked } from 'marked'
-import { recognize, analyzeCompliance, generatePrompt, fullPipelineStream, consumeSSEStream } from '../api/index.js'
+import { recognize, analyzeCompliance, generatePrompt, refineImage, fullPipelineStream, consumeSSEStream } from '../api/index.js'
 import PipelineSidebar from './PipelineSidebar.vue'
 import ContentPanel from './ContentPanel.vue'
 import SummaryBar from './SummaryBar.vue'
@@ -82,6 +84,7 @@ const nodes = ref({
   step2: { label: '合规分析', state: 'pending', timeMs: null, badge: 'Pending', children: [] },
   step3: { label: '生成提示词', state: 'pending', timeMs: null, badge: 'Pending' },
   step4: { label: '图片编辑', state: 'pending', timeMs: null, badge: 'Pending' },
+  step5: { label: '补充编辑', state: 'pending', timeMs: null, badge: 'Pending' },
 })
 
 // Content for each step
@@ -93,12 +96,17 @@ const complianceQueries = ref([])
 // Step 4 image comparison data
 const step4Images = ref(null) // { original, generated }
 
+// Step 5 image comparison data
+const step5Images = ref(null) // { original, generated }
+
 // Intermediate results for retry support
 const context = ref({
   sceneDescription: null,
   complianceAnalysis: null,
   editPrompt: null,
   originalUrl: null,
+  generatedUrl: null,
+  historyId: null,
 })
 
 // Summary times
@@ -122,6 +130,7 @@ const panelTitle = computed(() => {
     step2: '合规分析结果',
     step3: '编辑提示词',
     step4: '改进效果预览',
+    step5: '补充编辑',
   }
   return titles[currentStep.value] || '等待开始'
 })
@@ -139,6 +148,10 @@ const panelContent = computed(() => {
   // step4: 如果有对比数据则由 ContentPanel 渲染
   if (currentStep.value === 'step4' && step4Images.value) {
     return '' // ContentPanel 使用 step4Images prop 渲染
+  }
+  // step5: 由 ContentPanel 渲染输入框或对比图
+  if (currentStep.value === 'step5') {
+    return '' // ContentPanel 使用 step5Images prop 渲染
   }
   return raw
 })
@@ -200,14 +213,15 @@ async function runAnalysis() {
     alert('分析失败: ' + e.message)
   } finally {
     emit('update:loading', false)
-    // Check if any node has error state
-    const hasError = Object.values(nodes.value).some(n => n.state === 'error')
+    // Check if any node (except step5) has error state
+    const hasError = Object.entries(nodes.value)
+      .some(([id, n]) => id !== 'step5' && n.state === 'error')
     if (hasError) {
       status.value = 'error'
       title.value = '诊断出错 — 可点击重试失败步骤'
     } else {
       status.value = 'done'
-      title.value = '诊断完成'
+      title.value = '诊断完成 — 可使用补充编辑进一步修正'
     }
   }
 }
@@ -255,6 +269,10 @@ async function runFullPipeline() {
                 original: context.value.originalUrl,
                 generated: ev.image_url,
               }
+              context.value.generatedUrl = ev.image_url
+              // 激活 Step 5
+              setNodeState('step5', 'pending')
+              focusStep('step5')
             }
           }
         }
@@ -303,6 +321,9 @@ async function runFullPipeline() {
       summary.value.total = (totalMs / 1000).toFixed(1) + 's'
       showSummary.value = true
       panelTime.value = (totalMs / 1000).toFixed(1) + 's'
+      if (ev.history_id) {
+        context.value.historyId = ev.history_id
+      }
     }
   })
 }
@@ -361,6 +382,8 @@ async function retryStep(stepId) {
       await retryStep3()
     } else if (stepId === 'step4') {
       await retryStep4()
+    } else if (stepId === 'step5') {
+      await retryStep5()
     }
     // Clear overall error status if any step succeeds
     if (status.value === 'error') {
@@ -461,11 +484,51 @@ async function retryStep4() {
       original: context.value.originalUrl,
       generated: data.image_url,
     }
+    context.value.generatedUrl = data.image_url
+    // 激活 Step 5
+    setNodeState('step5', 'pending')
+    focusStep('step5')
   } else {
     setNodeState('step4', 'error')
     setStepContent('step4', `<div class="md-content" style="color:var(--accent)">✗ ${data.error}</div>`)
     throw new Error(data.error)
   }
+}
+
+async function runStep5(userPrompt) {
+  if (!context.value.generatedUrl) {
+    alert('缺少 Step 4 生成的图片，请先完成步骤 4')
+    return
+  }
+
+  setNodeState('step5', 'running')
+  focusStep('step5')
+  step5Images.value = null
+
+  // 将 Step 4 生成的图片 URL 转为 File 对象
+  const resp = await fetch(context.value.generatedUrl)
+  const blob = await resp.blob()
+  const file = new File([blob], 'generated.png', { type: 'image/png' })
+
+  const data = await refineImage(file, userPrompt, context.value.historyId)
+
+  if (data.success) {
+    setNodeState('step5', 'success', data.time_ms)
+    step5Images.value = {
+      original: context.value.generatedUrl,
+      generated: data.image_url,
+    }
+  } else {
+    setNodeState('step5', 'error')
+    setStepContent('step5', `<div class="md-content" style="color:var(--accent)">✗ ${data.error}</div>`)
+  }
+}
+
+async function retryStep5() {
+  alert('请在输入框中重新输入修正提示词后点击"开始修正"')
+  setNodeState('step5', 'pending')
+  step5Images.value = null
+  focusStep('step5')
 }
 
 onMounted(() => {
