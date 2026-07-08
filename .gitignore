@@ -32,6 +32,7 @@ frontend/node_modules/
 # Uploads & generated files
 data/uploads/
 data/history.json
+data/history.db
 *.log
 
 # Test images
