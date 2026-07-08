@@ -148,3 +148,41 @@ def delete_history(record_id: str) -> bool:
             return False
         finally:
             conn.close()
+
+
+def query_history(q: str = '', page: int = 1, per_page: int = 12) -> dict:
+    """支持搜索 + 分页的历史记录查询。
+    返回 { records: [...], total: N, page: N, pages: N }"""
+    with _db_lock:
+        conn = _get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT data FROM history ORDER BY created_at DESC"
+            ).fetchall()
+            records = [json.loads(row[0]) for row in rows]
+        except Exception as e:
+            logger.warning(f"[History] 读取失败: {e}")
+            records = []
+        finally:
+            conn.close()
+
+    # 应用层搜索（JSON blob 无法 SQL 级过滤）
+    if q:
+        q_lower = q.lower()
+        searchable_keys = ('scene_description', 'edit_prompt', 'edit_summary', 'compliance_analysis')
+        filtered = []
+        for r in records:
+            for key in searchable_keys:
+                val = r.get(key, '')
+                if val and q_lower in str(val).lower():
+                    filtered.append(r)
+                    break
+        records = filtered
+
+    total = len(records)
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = max(1, min(page, pages))
+    start = (page - 1) * per_page
+    records = records[start:start + per_page]
+
+    return {'records': records, 'total': total, 'page': page, 'pages': pages}

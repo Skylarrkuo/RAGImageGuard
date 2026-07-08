@@ -1,17 +1,20 @@
 """历史记录路由 — 查询、详情、删除"""
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 
-from services.history import load_history, delete_history
+from services.history import load_history, delete_history, query_history
 
 history_bp = Blueprint("history", __name__)
 
 
 @history_bp.route("/api/history", methods=["GET"])
 def api_get_history():
-    """获取历史记录列表"""
-    history = load_history()
-    return jsonify({"success": True, "records": history})
+    """获取历史记录列表（支持搜索 + 分页）"""
+    q = request.args.get('q', '').strip()
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 12, type=int)
+    data = query_history(q=q, page=page, per_page=per_page)
+    return jsonify({"success": True, **data})
 
 
 @history_bp.route("/api/history/<record_id>", methods=["GET"])

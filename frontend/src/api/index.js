@@ -128,8 +128,10 @@ export async function consumeSSEStream(reader, onEvent) {
 /**
  * 历史记录 API
  */
-export async function getHistory() {
-  return request(`${API_BASE}/api/history`)
+export async function getHistory(q = '', page = 1, perPage = 12) {
+  const params = new URLSearchParams({ page, per_page: perPage })
+  if (q) params.set('q', q)
+  return request(`${API_BASE}/api/history?${params}`)
 }
 
 export async function getHistoryDetail(id) {
