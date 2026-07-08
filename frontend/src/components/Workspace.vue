@@ -34,6 +34,7 @@
           :step5-images="step5Images"
           @toggle-compliance="toggleCompliance"
           @run-step5="runStep5"
+          @finish-flow="finishFlow"
         />
       </div>
 
@@ -60,7 +61,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { marked } from 'marked'
-import { recognize, analyzeCompliance, generatePrompt, refineImage, fullPipelineStream, consumeSSEStream } from '../api/index.js'
+import { recognize, analyzeCompliance, generatePrompt, refineImage, completeFlow, fullPipelineStream, consumeSSEStream } from '../api/index.js'
 import PipelineSidebar from './PipelineSidebar.vue'
 import ContentPanel from './ContentPanel.vue'
 import SummaryBar from './SummaryBar.vue'
@@ -541,6 +542,20 @@ async function retryStep5() {
   setNodeState('step5', 'pending')
   step5Images.value = null
   focusStep('step5')
+}
+
+async function finishFlow() {
+  // 跳过 Step 5，直接标记完成
+  if (context.value.historyId) {
+    try {
+      await completeFlow(context.value.historyId)
+    } catch (e) {
+      console.warn('completeFlow failed:', e)
+    }
+  }
+  setNodeState('step5', 'success')
+  status.value = 'done'
+  title.value = '诊断完成'
 }
 
 onMounted(() => {

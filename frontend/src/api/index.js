@@ -64,6 +64,16 @@ export async function refineImage(image, prompt, historyId) {
 }
 
 /**
+ * 结束流程（跳过 Step 5）
+ */
+export async function completeFlow(historyId) {
+  const formData = new FormData()
+  formData.append('history_id', historyId)
+  const resp = await fetch(`${API_BASE}/api/complete-flow`, { method: 'POST', body: formData })
+  return resp.json()
+}
+
+/**
  * SSE 流式完整流水线
  * 返回 ReadableStream reader，调用方自行解析 SSE 事件
  */

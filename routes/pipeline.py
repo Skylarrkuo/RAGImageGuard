@@ -145,6 +145,22 @@ def api_generate_image():
     return jsonify(result)
 
 
+@pipeline_bp.route("/api/complete-flow", methods=["POST"])
+def api_complete_flow():
+    """结束流程 — 用户跳过 Step 5，直接完成"""
+    logger.info("=" * 60)
+    logger.info("[API] POST /api/complete-flow 收到请求")
+    history_id = request.form.get("history_id", "")
+    if not history_id:
+        return jsonify({"success": False, "error": "缺少 history_id"}), 400
+
+    update_history(history_id, {
+        "status": "completed",
+        "step5_skipped": True,
+    })
+    return jsonify({"success": True})
+
+
 @pipeline_bp.route("/api/refine-image", methods=["POST"])
 def api_refine_image():
     """Step 5: 补充编辑 — 用户手动输入修正提示词，对已修改图片进行二次编辑"""
@@ -165,9 +181,12 @@ def api_refine_image():
 
     image_format = detect_image_format(image.filename or "", image.content_type or "")
     logger.info(f"[API] 图片: {image.filename} ({len(image_bytes)} bytes, {image_format}) | 修正提示词: {prompt[:100]}...")
+    t5 = time.time()
     future = executor.submit(generate_edited_image, image_bytes, image_format, prompt)
     result = future.result()
-    logger.info(f"[API] /api/refine-image 完成 | success={result.get('success')}")
+    t5_ms = int((time.time() - t5) * 1000)
+    result["time_ms"] = t5_ms
+    logger.info(f"[API] /api/refine-image 完成 | 耗时: {t5_ms}ms | success={result.get('success')}")
 
     if result.get("success"):
         filename = f"refined_{uuid.uuid4().hex[:8]}.png"
@@ -181,6 +200,7 @@ def api_refine_image():
                 "refine_prompt": prompt,
                 "refined_image": rel_path,
                 "status": "refined",
+                "step5_ms": t5_ms,
             })
 
     return jsonify(result)
