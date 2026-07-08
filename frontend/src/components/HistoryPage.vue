@@ -72,7 +72,28 @@
         <div class="detail-layout">
           <!-- Left: Image comparison -->
           <div class="detail-images">
-            <div v-if="selectedRecord.original_image && selectedRecord.generated_image" class="image-compare" ref="compareRef"
+            <!-- Refined image comparison (generated vs refined) -->
+            <div v-if="selectedRecord.refined_image && selectedRecord.generated_image" class="image-compare" ref="compareRef"
+              @mousedown="startDrag" @touchstart.passive="startDrag"
+            >
+              <div class="compare-layer compare-layer-before" :style="{ clipPath: `inset(0 ${100 - sliderPos}% 0 0)` }">
+                <img :src="'/images/' + selectedRecord.generated_image" alt="Before (Step 4)" />
+              </div>
+              <div class="compare-layer compare-layer-after">
+                <img :src="'/images/' + selectedRecord.refined_image" alt="After (Step 5)" />
+              </div>
+              <div class="compare-slider" :style="{ left: sliderPos + '%' }">
+                <div class="compare-slider-line"></div>
+                <div class="compare-slider-handle">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                </div>
+              </div>
+              <div class="compare-label compare-label-before">Step 4</div>
+              <div class="compare-label compare-label-after">Step 5</div>
+            </div>
+            <!-- Original vs generated comparison -->
+            <div v-else-if="selectedRecord.original_image && selectedRecord.generated_image" class="image-compare" ref="compareRef"
               @mousedown="startDrag" @touchstart.passive="startDrag"
             >
               <div class="compare-layer compare-layer-before" :style="{ clipPath: `inset(0 ${100 - sliderPos}% 0 0)` }">
@@ -93,6 +114,33 @@
             </div>
             <div v-else-if="selectedRecord.original_image" class="detail-single-image">
               <img :src="'/images/' + selectedRecord.original_image" alt="Original" />
+            </div>
+            <!-- Download buttons -->
+            <div class="detail-download-actions">
+              <button v-if="selectedRecord.original_image" class="btn btn-outline detail-download-btn" @click="downloadImage('/images/' + selectedRecord.original_image, 'original')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="7 10 12 15 17 10"/>
+                  <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                下载原图
+              </button>
+              <button v-if="selectedRecord.generated_image" class="btn btn-outline detail-download-btn" @click="downloadImage('/images/' + selectedRecord.generated_image, 'generated')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="7 10 12 15 17 10"/>
+                  <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                下载生成图
+              </button>
+              <button v-if="selectedRecord.refined_image" class="btn btn-outline detail-download-btn" @click="downloadImage('/images/' + selectedRecord.refined_image, 'refined')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="7 10 12 15 17 10"/>
+                  <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                下载精修图
+              </button>
             </div>
           </div>
 
@@ -128,6 +176,18 @@
               <div class="prompt-box">{{ selectedRecord.edit_prompt }}</div>
             </div>
 
+            <!-- Step 4: Edit summary -->
+            <div v-if="selectedRecord.edit_summary" class="detail-section">
+              <div class="detail-section-title">修改总结</div>
+              <div class="md-content" v-html="renderMarkdown(selectedRecord.edit_summary)"></div>
+            </div>
+
+            <!-- Step 5: Refine info -->
+            <div v-if="selectedRecord.refine_prompt" class="detail-section">
+              <div class="detail-section-title">补充编辑提示词</div>
+              <div class="prompt-box">{{ selectedRecord.refine_prompt }}</div>
+            </div>
+
             <!-- Step times -->
             <div v-if="selectedRecord.step_times" class="detail-section">
               <div class="detail-section-title">耗时统计</div>
@@ -147,6 +207,10 @@
                 <div v-if="selectedRecord.step_times.step4_ms" class="detail-time-item">
                   <span>图片编辑</span>
                   <span>{{ (selectedRecord.step_times.step4_ms / 1000).toFixed(1) }}s</span>
+                </div>
+                <div v-if="selectedRecord.step5_ms" class="detail-time-item">
+                  <span>补充编辑</span>
+                  <span>{{ (selectedRecord.step5_ms / 1000).toFixed(1) }}s</span>
                 </div>
               </div>
             </div>
@@ -212,6 +276,7 @@ function formatTime(iso) {
 
 function statusLabel(status) {
   if (status === 'completed') return '完成'
+  if (status === 'refined') return '已精修'
   if (status === 'partial') return '部分'
   return status || '—'
 }
@@ -261,5 +326,15 @@ function updateSlider(e) {
   const touch = e.touches ? e.touches[0] : e
   const x = touch.clientX - rect.left
   sliderPos.value = Math.max(0, Math.min(100, (x / rect.width) * 100))
+}
+
+// ── Download image ──
+function downloadImage(url, type) {
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `${type}_${Date.now()}.png`
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
 }
 </script>

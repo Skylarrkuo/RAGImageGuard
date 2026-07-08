@@ -1074,6 +1074,289 @@ body {
 }
 .generated-wrap img { width: 100%; display: block; }
 
+/* ── Step 4/5: Thumbnail Preview ── */
+.image-thumb-section {
+  width: 100%;
+  max-width: 900px;
+}
+
+.image-thumb-wrapper {
+  position: relative;
+  width: 240px;
+  border: 2px solid var(--fg);
+  cursor: pointer;
+  overflow: hidden;
+  transition: all 200ms ease-out;
+}
+
+.image-thumb-wrapper:hover {
+  box-shadow: 4px 4px 0px 0px var(--fg);
+  transform: translate(-2px, -2px);
+}
+
+.image-thumb-wrapper:hover .thumb-hover-overlay {
+  opacity: 1;
+}
+
+.image-thumb {
+  width: 100%;
+  display: block;
+}
+
+.thumb-hover-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  background: rgba(17, 17, 17, 0.7);
+  color: #fff;
+  opacity: 0;
+  transition: opacity 200ms ease;
+  pointer-events: none;
+}
+
+.thumb-hover-overlay svg {
+  stroke: #fff;
+}
+
+.thumb-hover-overlay span {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.thumb-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.btn-thumb-expand,
+.btn-thumb-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--fg);
+  background: var(--bg, #fff);
+  color: var(--fg, #111);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.btn-thumb-expand:hover,
+.btn-thumb-download:hover {
+  background: var(--fg, #111);
+  color: var(--bg, #fff);
+  box-shadow: 2px 2px 0px 0px var(--fg);
+  transform: translate(-1px, -1px);
+}
+
+.btn-thumb-expand svg,
+.btn-thumb-download svg {
+  flex-shrink: 0;
+}
+
+/* ── Lightbox Overlay ── */
+.lightbox-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  box-sizing: border-box;
+  animation: lightboxFadeIn 200ms ease;
+}
+
+@keyframes lightboxFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.lightbox-content {
+  position: relative;
+  max-width: 95vw;
+  max-height: 90vh;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lightbox-close {
+  position: fixed;
+  top: 1.5rem;
+  right: 1.5rem;
+  z-index: 10001;
+  width: 44px;
+  height: 44px;
+  border: 2px solid #fff;
+  background: rgba(17, 17, 17, 0.8);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.lightbox-close:hover {
+  background: var(--accent, #cc0000);
+  border-color: var(--accent, #cc0000);
+  transform: scale(1.1);
+}
+
+.lightbox-download {
+  position: fixed;
+  top: 1.5rem;
+  right: 5rem;
+  z-index: 10001;
+  width: 44px;
+  height: 44px;
+  border: 2px solid #fff;
+  background: rgba(17, 17, 17, 0.8);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.lightbox-download:hover {
+  background: var(--success, #2d7d46);
+  border-color: var(--success, #2d7d46);
+  transform: scale(1.1);
+}
+
+.lightbox-compare {
+  position: relative;
+  max-width: 95vw;
+  max-height: 85vh;
+  border: 2px solid #fff;
+  cursor: ew-resize;
+  user-select: none;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.lightbox-compare .compare-layer img {
+  max-height: 85vh;
+  width: auto;
+  max-width: 95vw;
+  display: block;
+  pointer-events: none;
+  object-fit: contain;
+}
+
+.lightbox-compare .compare-layer-before {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
+}
+
+.lightbox-compare .compare-layer-after {
+  position: relative;
+  z-index: 0;
+}
+
+.lightbox-compare .compare-slider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.lightbox-compare .compare-slider-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #fff;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
+}
+
+.lightbox-compare .compare-slider-handle {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  background: #fff;
+  border: 2px solid var(--fg, #111);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
+  z-index: 3;
+}
+
+.lightbox-compare .compare-slider-handle svg {
+  stroke: var(--fg, #111);
+  flex-shrink: 0;
+}
+
+.lightbox-compare .compare-label {
+  position: absolute;
+  bottom: 1rem;
+  z-index: 4;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  padding: 0.3rem 0.8rem;
+  background: rgba(17, 17, 17, 0.8);
+  color: #fff;
+  pointer-events: none;
+}
+
+.lightbox-compare .compare-label-before {
+  left: 1rem;
+}
+
+.lightbox-compare .compare-label-after {
+  right: 1rem;
+}
+
+.lightbox-single {
+  max-width: 95vw;
+  max-height: 85vh;
+}
+
+.lightbox-single img {
+  max-width: 95vw;
+  max-height: 85vh;
+  display: block;
+  object-fit: contain;
+}
+
 /* ── Edit Summary Section ── */
 .edit-summary-section {
   border: 1px solid var(--fg);
@@ -1230,13 +1513,6 @@ body {
 
 .refine-preview {
   width: 100%;
-  border: 2px solid var(--fg);
-  overflow: hidden;
-}
-
-.refine-preview img {
-  width: 100%;
-  display: block;
 }
 
 .refine-form {
@@ -1267,8 +1543,13 @@ body {
   color: var(--neutral-400);
 }
 
+.refine-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
 .refine-btn {
-  align-self: flex-start;
   padding: 0.6rem 1.5rem;
   font-size: 0.85rem;
 }
@@ -1276,6 +1557,24 @@ body {
 .refine-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.refine-finish-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.6rem 1.2rem;
+  font-size: 0.85rem;
+  color: var(--fg);
+  border: 1px solid var(--fg);
+  background: transparent;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.refine-finish-btn:hover {
+  background: var(--fg);
+  color: var(--bg);
 }
 
 /* ── Summary Bar ── */
@@ -1491,6 +1790,10 @@ body {
   border-color: var(--accent);
   color: var(--accent);
 }
+.history-card-status.refined {
+  border-color: var(--success);
+  color: var(--success);
+}
 
 .history-card-desc {
   font-family: 'Inter', sans-serif;
@@ -1578,6 +1881,26 @@ body {
 .detail-time-item span:last-child {
   font-family: 'JetBrains Mono', monospace;
   font-weight: 600;
+}
+
+/* ── Detail Download Actions ── */
+.detail-download-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  flex-wrap: wrap;
+}
+
+.detail-download-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.7rem;
+}
+
+.detail-download-btn svg {
+  flex-shrink: 0;
 }
 
 /* ── Responsive ── */
