@@ -67,6 +67,17 @@
         @confirm="onStep2Confirm"
         @cancel="onStep2Cancel"
       />
+
+      <!-- 通用提示 Modal（替代 alert） -->
+      <AppModal
+        :visible="showInfoModal"
+        mode="confirm"
+        :title="infoModalTitle"
+        :message="infoModalMessage"
+        confirm-text="确定"
+        @confirm="showInfoModal = false"
+        @cancel="showInfoModal = false"
+      />
     </div>
   </div>
 </template>
@@ -74,7 +85,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { marked } from 'marked'
-import { recognize, analyzeCompliance, generatePrompt, refineImage, completeFlow, fullPipelineStream, consumeSSEStream } from '../api/index.js'
+import { recognize, analyzeCompliance, generatePrompt, generateImage, refineImage, completeFlow, fullPipelineStream, consumeSSEStream } from '../api/index.js'
 import PipelineSidebar from './PipelineSidebar.vue'
 import ContentPanel from './ContentPanel.vue'
 import SummaryBar from './SummaryBar.vue'
@@ -89,6 +100,17 @@ const emit = defineEmits(['back', 'update:loading'])
 
 // Step2 prompt modal
 const showPromptModal = ref(false)
+
+// 通用提示 Modal（替代 alert）
+const showInfoModal = ref(false)
+const infoModalTitle = ref('')
+const infoModalMessage = ref('')
+
+function showInfo(title, message) {
+  infoModalTitle.value = title
+  infoModalMessage.value = message
+  showInfoModal.value = true
+}
 
 // Pipeline state
 const title = ref('诊断进行中...')
@@ -232,7 +254,7 @@ async function runAnalysis() {
       await runStep2Only()
     }
   } catch (e) {
-    alert('分析失败: ' + e.message)
+    showInfo('分析失败', e.message)
   } finally {
     emit('update:loading', false)
     // Check if any node (except step5) has error state
@@ -426,7 +448,7 @@ async function retryStep(stepId) {
       title.value = '诊断进行中...'
     }
   } catch (e) {
-    alert('重试失败: ' + e.message)
+    showInfo('重试失败', e.message)
   } finally {
     emit('update:loading', false)
   }
@@ -452,7 +474,7 @@ async function retryStep1() {
 
 async function retryStep2() {
   if (!context.value.sceneDescription) {
-    alert('缺少场景描述，请先完成步骤 1')
+    showInfo('提示', '缺少场景描述，请先完成步骤 1')
     return
   }
 
@@ -479,7 +501,7 @@ async function retryStep2() {
 
 async function retryStep3() {
   if (!context.value.sceneDescription || !context.value.complianceAnalysis) {
-    alert('缺少前置数据，请先完成步骤 1 和 2')
+    showInfo('提示', '缺少前置数据，请先完成步骤 1 和 2')
     return
   }
 
@@ -502,7 +524,7 @@ async function retryStep3() {
 
 async function retryStep4() {
   if (!context.value.editPrompt) {
-    alert('缺少编辑提示词，请先完成步骤 3')
+    showInfo('提示', '缺少编辑提示词，请先完成步骤 3')
     return
   }
 
@@ -510,7 +532,6 @@ async function retryStep4() {
   focusStep('step4')
   step4Images.value = null // 清空旧图，触发扫描动画重置
 
-  const { generateImage } = await import('../api/index.js')
   const data = await generateImage(props.file, context.value.editPrompt)
 
   if (data.success) {
@@ -536,7 +557,7 @@ async function retryStep4() {
 
 async function runStep5(userPrompt) {
   if (!context.value.generatedUrl) {
-    alert('缺少 Step 4 生成的图片，请先完成步骤 4')
+    showInfo('提示', '缺少 Step 4 生成的图片，请先完成步骤 4')
     return
   }
 
@@ -564,7 +585,7 @@ async function runStep5(userPrompt) {
 }
 
 async function retryStep5() {
-  alert('请在输入框中重新输入修正提示词后点击"开始修正"')
+  showInfo('提示', '请在输入框中重新输入修正提示词后点击"开始修正"')
   setNodeState('step5', 'pending')
   step5Images.value = null
   focusStep('step5')
