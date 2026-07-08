@@ -47,6 +47,27 @@ def create_app() -> Flask:
 
     register_all_blueprints(app)
 
+    # ---- 全局异常处理 ----
+    from core.logging import logger as _logger
+
+    @app.errorhandler(413)
+    def _handle_413(e):
+        return jsonify({"error": f"文件大小超过限制（{settings.MAX_UPLOAD_MB}MB）"}), 413
+
+    @app.errorhandler(404)
+    def _handle_404(e):
+        return jsonify({"error": "资源不存在"}), 404
+
+    @app.errorhandler(500)
+    def _handle_500(e):
+        _logger.error(f"服务器内部错误: {e}")
+        return jsonify({"error": "服务器内部错误"}), 500
+
+    @app.errorhandler(Exception)
+    def _handle_exception(e):
+        _logger.exception(f"未捕获异常: {type(e).__name__}: {e}")
+        return jsonify({"error": f"服务器错误: {type(e).__name__}"}), 500
+
     return app
 
 
