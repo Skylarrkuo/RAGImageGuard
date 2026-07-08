@@ -6,12 +6,12 @@ import requests
 
 from config.settings import settings
 from core.logging import logger
-from core.utils import get_mime
+from core.utils import get_mime, resize_for_api
 
 
 def recognize_with_mimo(image_bytes: bytes, image_format: str) -> dict:
     """调用 MiMo 2.5 视觉模型识别图片内容"""
-    base64_image = base64.b64encode(image_bytes).decode()
+    base64_image = base64.b64encode(resize_for_api(image_bytes)).decode()
     mime = get_mime(image_format)
 
     api_key = settings.MIMO_API_KEY

@@ -10,7 +10,7 @@ import requests
 
 from config.settings import settings
 from core.logging import logger
-from core.utils import get_image_dimensions, pick_gpt_image_size
+from core.utils import get_image_dimensions, pick_gpt_image_size, resize_for_api
 
 # 保护 os.environ 读写的全局锁
 _env_lock = threading.Lock()
@@ -57,7 +57,7 @@ def generate_edited_image(image_bytes: bytes, image_format: str, prompt: str) ->
             http_client = httpx.Client(proxy=None, timeout=timeout)
             client = OpenAI(api_key=api_key, base_url=settings.OPENAI_API_BASE, timeout=600.0, http_client=http_client)
 
-            image_file = io.BytesIO(image_bytes)
+            image_file = io.BytesIO(resize_for_api(image_bytes))
             image_file.name = f"image.{image_format}"
 
             result = client.images.edit(

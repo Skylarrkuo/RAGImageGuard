@@ -1,4 +1,4 @@
-"""通用工具函数：图片格式检测、MIME 映射、尺寸计算"""
+"""通用工具函数：图片格式检测、MIME 映射、尺寸计算、图片缩放"""
 
 import io
 from PIL import Image
@@ -8,6 +8,21 @@ def get_image_dimensions(image_bytes: bytes) -> tuple[int, int]:
     """从图片字节流中获取宽高"""
     img = Image.open(io.BytesIO(image_bytes))
     return img.size  # (width, height)
+
+
+def resize_for_api(image_bytes: bytes, max_dim: int = 2048) -> bytes:
+    """缩放大图至 API 可接受尺寸，长边不超过 max_dim 像素。
+    小图不处理直接返回原字节。返回 JPEG 字节以减少传输体积。"""
+    img = Image.open(io.BytesIO(image_bytes))
+    w, h = img.size
+    if max(w, h) <= max_dim:
+        return image_bytes
+    img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=85, optimize=True)
+    return buf.getvalue()
 
 
 def create_thumbnail(image_bytes: bytes, max_size: int = 400) -> bytes:
