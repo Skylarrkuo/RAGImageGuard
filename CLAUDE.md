@@ -36,7 +36,7 @@
 RAG_PNG/
 ├── app.py                  # Flask 启动入口（应用工厂 create_app()，含安全中间件）
 ├── config/
-│   └── settings.py         # 环境变量配置加载
+│   └── settings.py         # 环境变量配置加载 + UPLOAD_DIR 共享常量 + reload() 方法
 ├── core/
 │   ├── logging.py          # 全局日志配置 + logger 导出
 │   └── utils.py            # 通用工具（格式检测、MIME 映射、尺寸计算、缩略图生成）
@@ -45,7 +45,7 @@ RAG_PNG/
 │   ├── maxkb.py            # Step 2: MaxKB 合规分析（子问题提取 + 重试 + 并行查询）
 │   ├── prompt_gen.py       # Step 3: 改图提示词生成（完整内容、移除路人）
 │   ├── image_edit.py       # Step 4: GPT-Image 图片编辑（自动比例检测）
-│   └── history.py          # 历史记录 SQLite 存储（save + update + delete）
+│   └── history.py          # 历史记录 SQLite 存储（save + update + delete + get_by_id + SQL 搜索）
 ├── routes/
 │   ├── __init__.py         # Blueprint 注册中心（register_all_blueprints）
 │   ├── pipeline.py         # 流水线路由（5 步流程、SSE 流式、补充编辑、结束流程、缩略图生成）
@@ -120,9 +120,12 @@ MAXKB_SCENE_OPTIMIZE_API_KEY=xxx
 # OpenAI 图片编辑
 OPENAI_API_KEY=xxx
 OPENAI_API_BASE=https://xxx
+OPENAI_MODEL_NAME=gpt-image-2   # 图片编辑模型（默认 gpt-image-2）
 ```
 
 ## 快速启动
+
+> **必须使用 conda 虚拟环境 `rag-png`**（Python 3.11）
 
 ```bash
 # 后端
@@ -134,7 +137,7 @@ cd frontend
 npm install
 npm run dev   # 运行在 http://localhost:5173
 
-# 运行测试
+# 运行测试（必须在 rag-png 环境下）
 conda activate rag-png
 pytest tests/ -v
 ```
@@ -150,13 +153,15 @@ pytest tests/ -v
 - MaxKB 合规分析采用 **4 路并行查询**：先用 MiMo 提取 4-5 个子问题（覆盖标识、安全、无障碍、消防、卫生等维度），再并行查询知识库
 - 子问题提取采用 **双 prompt 策略**：详细版 → 精简版 → 兜底问题，`_call_mimo()` 带 3 次重试
 - SSE 流式端点 (`/api/full-pipeline-stream`) 支持实时推送每个步骤进度，`done` 事件携带 `history_id`
+- **SSE 合规分析按完成顺序推送**：使用 `concurrent.futures.as_completed()` 而非提交顺序，先完成的子问题先推送到前端
 - 图片格式自动检测：支持 jpg/png/webp/gif
 - **图片存储按类别分目录**：`original/`、`generated/`、`refined/`、`thumb/`
 - **缩略图自动生成**：`_save_with_thumbnail()` 保存原图时同步生成长边 400px 的 JPEG 缩略图
 - **图片比例自适应**：`pick_gpt_image_size()` 根据原图宽高比选择 GPT-image-2 最接近的尺寸
 - **大图自动缩放**：`resize_for_api()` 在发送到 MiMo/GPT-Image 前自动缩放长边超过 2048px 的图片，输出 JPEG quality=85，减少传输体积
-- 历史记录存储在 `data/history.db`（SQLite），支持 `save_history()`、`update_history()`、`delete_history()`、`query_history()` 四种操作，启动时自动从 `history.json` 迁移
-- **历史搜索 + 分页**：`query_history(q, page, per_page)` 支持关键词搜索（匹配 scene_description/edit_prompt/edit_summary/compliance_analysis）和分页查询
+- 历史记录存储在 `data/history.db`（SQLite），支持 `save_history()`、`update_history()`、`delete_history()`、`get_history_by_id()`、`query_history()` 五种操作，首次数据库操作时自动从 `history.json` 迁移（懒执行，非模块导入时）
+- **历史详情 O(1) 查询**：`get_history_by_id(record_id)` 直接 SQL `WHERE id = ?` 索引查询，无需加载全量数据
+- **历史搜索 SQL 层**：`query_history(q, page, per_page)` 使用 SQL `LIKE` 匹配 + `LIMIT/OFFSET` 分页，不在 Python 内存中过滤
 - **流程结束**：`/api/complete-flow` 端点处理用户跳过 Step 5 的场景，标记 `status: "completed"` + `step5_skipped: true`
 - **Step 5 计时**：`api_refine_image` 记录 `step5_ms` 耗时到历史记录
 
@@ -193,3 +198,6 @@ pytest tests/ -v
 12. **全局异常处理**：`app.py` 注册 `errorhandler` 覆盖 413/404/500/Exception，所有错误返回 JSON 格式
 13. **线程池复用**：模块级 `executor` 被单步端点和 SSE 流式端点共用，避免反复创建销毁
 14. **前端错误处理**：`api/index.js` 的 `request()` 拦截器统一检查 HTTP 状态码，非 2xx 自动抛出带服务端错误信息的异常
+15. **共享常量**：`UPLOAD_DIR` 定义在 `config/settings.py`，被 `routes/pipeline.py` 和 `routes/system.py` 共同导入，避免重复定义
+16. **配置热加载**：`settings.reload()` 方法可从环境变量重新读取配置，测试中 `monkeypatch.setenv()` 后调用即可刷新
+17. **前端 Modal 统一**：所有用户提示（含错误、确认）统一使用 `AppModal` 组件，不使用原生 `alert()`/`confirm()`/`prompt()`

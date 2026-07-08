@@ -16,7 +16,7 @@
 RAG_PNG/
 ├── app.py                  # Flask 启动入口（应用工厂 + 全局异常处理）
 ├── config/
-│   └── settings.py         # 环境变量配置加载
+│   └── settings.py         # 环境变量配置 + UPLOAD_DIR 共享常量
 ├── core/
 │   ├── logging.py          # 全局日志配置
 │   └── utils.py            # 通用工具（格式检测、尺寸计算、缩略图生成）
@@ -25,7 +25,7 @@ RAG_PNG/
 │   ├── maxkb.py            # Step 2: MaxKB 合规分析（子问题提取 + 并行查询）
 │   ├── prompt_gen.py       # Step 3: 改图提示词生成
 │   ├── image_edit.py       # Step 4: GPT-Image 图片编辑（自动比例检测）
-│   └── history.py          # 历史记录 SQLite 存储（save + update + delete）
+│   └── history.py          # 历史记录 SQLite 存储（CRUD + SQL 搜索 + 懒迁移）
 ├── routes/
 │   ├── __init__.py         # Blueprint 注册中心
 │   ├── pipeline.py         # 流水线路由（5 步流程、SSE 流式、补充编辑、结束流程）
@@ -41,7 +41,8 @@ RAG_PNG/
 │           ├── PipelineSidebar.vue # 侧边栏步骤节点
 │           ├── ContentPanel.vue    # 内容展示 + 补充编辑输入
 │           ├── SummaryBar.vue      # 耗时统计栏
-│           └── HistoryPage.vue     # 历史记录列表 + 详情对比
+│           ├── HistoryPage.vue     # 历史记录列表 + 详情对比
+│           └── AppModal.vue        # 自定义 Modal 组件（prompt/confirm）
 ├── data/
 │   ├── history.db          # 历史记录 SQLite 数据库
 │   └── uploads/images/     # 图片存储（按类别分目录）
@@ -51,16 +52,29 @@ RAG_PNG/
 │       └── thumb/          # 缩略图（长边 400px）
 ├── .env                    # 环境变量（不提交）
 ├── .env.example            # 环境变量模板
-└── requirements.txt        # Python 依赖
+├── requirements.txt        # Python 依赖
+├── pytest.ini              # pytest 配置
+└── tests/
+    ├── conftest.py         # 测试夹具（Flask 应用、测试客户端、示例图片）
+    ├── test_utils.py       # 工具函数测试
+    ├── test_history.py     # 历史记录测试
+    └── test_routes.py      # API 路由测试
 ```
 
 ## 快速开始
 
 ### 环境准备
 
+> **必须使用 conda 虚拟环境 `rag-png`**（Python 3.11）
+
 ```bash
+# 创建环境（仅首次）
 conda create -n rag-png python=3.11 -y
+
+# 激活环境（每次开发/运行/测试前必须执行）
 conda activate rag-png
+
+# 安装依赖
 pip install -r requirements.txt
 ```
 
@@ -79,10 +93,12 @@ cp .env.example .env
 | `API_KEY` | 空（不启用） | API 访问密钥，设置后请求需携带 `X-API-Key` 头 |
 | `ALLOWED_ORIGINS` | `http://localhost:5173,http://localhost:8001` | CORS 允许的来源（逗号分隔） |
 | `MAX_UPLOAD_MB` | `20` | 上传文件大小限制（MB） |
+| `OPENAI_MODEL_NAME` | `gpt-image-2` | 图片编辑使用的模型 |
 
 ### 启动后端
 
 ```bash
+conda activate rag-png
 python app.py
 ```
 
@@ -97,6 +113,13 @@ npm run dev
 ```
 
 前端运行在 `http://localhost:5173`
+
+### 运行测试
+
+```bash
+conda activate rag-png
+pytest tests/ -v
+```
 
 ## API 端点
 
@@ -126,3 +149,4 @@ npm run dev
 - **图片处理**: Pillow（尺寸检测 + 缩略图生成）
 - **前端**: API 统一拦截器（`request()` 自动检查 HTTP 状态码，非 2xx 抛出异常）
 - **安全**: CORS 白名单 + 上传大小限制 + API Key 认证 + 线程安全锁 + 全局异常处理
+- **测试**: pytest 44 个测试用例（工具函数 + 历史记录 + API 路由），必须在 `rag-png` conda 环境下运行
