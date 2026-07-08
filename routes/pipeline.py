@@ -3,7 +3,7 @@
 import json
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -21,8 +21,14 @@ from config.settings import settings
 
 pipeline_bp = Blueprint("pipeline", __name__)
 
-# 线程池
+# 模块级线程池（全局复用，避免反复创建销毁）
 executor = ThreadPoolExecutor(max_workers=4)
+
+# 各步骤超时（秒），留 10s 余量
+_TIMEOUT_RECOGNIZE = 130    # MiMo 识别 120s
+_TIMEOUT_COMPLIANCE = 310   # MaxKB 查询 300s
+_TIMEOUT_PROMPT = 130       # 提示词生成 120s
+_TIMEOUT_IMAGE_EDIT = 310   # GPT-image 编辑 300s
 
 # 图片保存目录（按类别分子目录）
 UPLOAD_DIR = Path(__file__).resolve().parent.parent / "data" / "uploads" / "images"
@@ -71,7 +77,11 @@ def api_recognize():
     image_format = detect_image_format(image.filename or "", image.content_type or "")
     logger.info(f"[API] 图片信息: 文件名={image.filename}, 大小={len(image_bytes)} bytes, 格式={image_format}")
     future = executor.submit(recognize_with_mimo, image_bytes, image_format)
-    result = future.result()
+    try:
+        result = future.result(timeout=_TIMEOUT_RECOGNIZE)
+    except FuturesTimeoutError:
+        logger.error("[API] /api/recognize 超时")
+        return jsonify({"success": False, "error": "识别超时，请重试"}), 504
     logger.info(f"[API] /api/recognize 完成 | success={result.get('success')}")
     return jsonify(result)
 
@@ -89,7 +99,11 @@ def api_analyze_compliance():
 
     logger.info(f"[API] 场景描述长度: {len(scene_description)} 字符 | 用户角色: {user_role}")
     future = executor.submit(analyze_compliance_with_maxkb, scene_description, user_role)
-    result = future.result()
+    try:
+        result = future.result(timeout=_TIMEOUT_COMPLIANCE)
+    except FuturesTimeoutError:
+        logger.error("[API] /api/analyze-compliance 超时")
+        return jsonify({"success": False, "error": "合规分析超时，请重试"}), 504
     logger.info(f"[API] /api/analyze-compliance 完成 | success={result.get('success')}")
     return jsonify(result)
 
@@ -107,7 +121,11 @@ def api_generate_prompt():
 
     logger.info(f"[API] 场景描述: {len(scene_description)} 字符 | 合规分析: {len(compliance_analysis)} 字符")
     future = executor.submit(generate_edit_prompt, scene_description, compliance_analysis)
-    result = future.result()
+    try:
+        result = future.result(timeout=_TIMEOUT_PROMPT)
+    except FuturesTimeoutError:
+        logger.error("[API] /api/generate-prompt 超时")
+        return jsonify({"success": False, "error": "提示词生成超时，请重试"}), 504
     logger.info(f"[API] /api/generate-prompt 完成 | success={result.get('success')}")
     return jsonify(result)
 
@@ -132,7 +150,11 @@ def api_generate_image():
     image_format = detect_image_format(image.filename or "", image.content_type or "")
     logger.info(f"[API] 图片: {image.filename} ({len(image_bytes)} bytes, {image_format}) | 提示词: {prompt[:100]}...")
     future = executor.submit(generate_edited_image, image_bytes, image_format, prompt)
-    result = future.result()
+    try:
+        result = future.result(timeout=_TIMEOUT_IMAGE_EDIT)
+    except FuturesTimeoutError:
+        logger.error("[API] /api/generate-image 超时")
+        return jsonify({"success": False, "error": "图片编辑超时，请重试"}), 504
     logger.info(f"[API] /api/generate-image 完成 | success={result.get('success')}")
 
     if result.get("success"):
@@ -183,7 +205,11 @@ def api_refine_image():
     logger.info(f"[API] 图片: {image.filename} ({len(image_bytes)} bytes, {image_format}) | 修正提示词: {prompt[:100]}...")
     t5 = time.time()
     future = executor.submit(generate_edited_image, image_bytes, image_format, prompt)
-    result = future.result()
+    try:
+        result = future.result(timeout=_TIMEOUT_IMAGE_EDIT)
+    except FuturesTimeoutError:
+        logger.error("[API] /api/refine-image 超时")
+        return jsonify({"success": False, "error": "图片编辑超时，请重试"}), 504
     t5_ms = int((time.time() - t5) * 1000)
     result["time_ms"] = t5_ms
     logger.info(f"[API] /api/refine-image 完成 | 耗时: {t5_ms}ms | success={result.get('success')}")
@@ -364,23 +390,26 @@ def api_full_pipeline_stream():
 
         all_sources = []
 
-        # 并行查询，每批4个
+        # 并行查询（复用模块级线程池）
         def _fetch_one(idx, q):
             logger.debug(f"[SSE-Compliance] 查询问题 {idx+1}: {q[:80]}...")
             answer, sources = _query_maxkb_single(q, maxkb_base_url, maxkb_api_key)
             logger.debug(f"[SSE-Compliance] 问题 {idx+1} 完成 | 回答长度: {len(answer)} 字符")
             return idx, answer, sources
 
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            futures = [pool.submit(_fetch_one, i, q) for i, q in enumerate(queries)]
-            for f in futures:
-                idx, answer, sources = f.result()
-                # 按完成顺序推送事件
-                yield {"type": "query_start", "index": idx, "question": sub_queries[idx]}
-                if answer:
-                    yield {"type": "content", "index": idx, "text": answer}
-                all_sources.extend(sources)
-                yield {"type": "query_end", "index": idx}
+        futures = [executor.submit(_fetch_one, i, q) for i, q in enumerate(queries)]
+        for f in futures:
+            try:
+                idx, answer, sources = f.result(timeout=_TIMEOUT_COMPLIANCE)
+            except FuturesTimeoutError:
+                logger.error(f"[SSE-Compliance] 查询超时")
+                continue
+            # 按完成顺序推送事件
+            yield {"type": "query_start", "index": idx, "question": sub_queries[idx]}
+            if answer:
+                yield {"type": "content", "index": idx, "text": answer}
+            all_sources.extend(sources)
+            yield {"type": "query_end", "index": idx}
 
         # 去重
         seen = set()
