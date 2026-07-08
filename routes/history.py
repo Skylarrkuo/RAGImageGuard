@@ -2,7 +2,7 @@
 
 from flask import Blueprint, jsonify, request
 
-from services.history import load_history, delete_history, query_history
+from services.history import get_history_by_id, delete_history, query_history
 
 history_bp = Blueprint("history", __name__)
 
@@ -20,10 +20,9 @@ def api_get_history():
 @history_bp.route("/api/history/<record_id>", methods=["GET"])
 def api_get_history_detail(record_id):
     """获取单条历史记录详情"""
-    history = load_history()
-    for record in history:
-        if record.get("id") == record_id:
-            return jsonify({"success": True, "record": record})
+    record = get_history_by_id(record_id)
+    if record:
+        return jsonify({"success": True, "record": record})
     return jsonify({"success": False, "error": "记录不存在"}), 404
 
 

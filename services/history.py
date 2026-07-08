@@ -15,6 +15,9 @@ _db_lock = threading.Lock()
 
 MAX_RECORDS = 100
 
+# 标记是否已执行过迁移（懒执行，避免模块导入时副作用）
+_migration_done = False
+
 
 def _get_conn() -> sqlite3.Connection:
     """获取数据库连接（每次调用新建，用完关闭）"""
@@ -33,7 +36,12 @@ def _get_conn() -> sqlite3.Connection:
 
 
 def _migrate_from_json():
-    """如 JSON 文件存在且 DB 为空，自动迁移"""
+    """如 JSON 文件存在且 DB 为空，自动迁移（懒执行，首次数据库操作时触发）"""
+    global _migration_done
+    if _migration_done:
+        return
+    _migration_done = True
+
     json_path = DB_PATH.parent / "history.json"
     if not json_path.exists():
         return
@@ -63,12 +71,9 @@ def _migrate_from_json():
             conn.close()
 
 
-# 启动时尝试迁移
-_migrate_from_json()
-
-
 def load_history() -> list:
     """读取所有历史记录（最新在前）"""
+    _migrate_from_json()
     with _db_lock:
         conn = _get_conn()
         try:
@@ -83,8 +88,26 @@ def load_history() -> list:
             conn.close()
 
 
+def get_history_by_id(record_id: str) -> dict | None:
+    """按 id 直接查询单条历史记录（O(1) 索引查询）"""
+    _migrate_from_json()
+    with _db_lock:
+        conn = _get_conn()
+        try:
+            row = conn.execute(
+                "SELECT data FROM history WHERE id = ?", (record_id,)
+            ).fetchone()
+            return json.loads(row[0]) if row else None
+        except Exception as e:
+            logger.warning(f"[History] 查询失败: {e}")
+            return None
+        finally:
+            conn.close()
+
+
 def save_history(record: dict):
     """追加一条历史记录"""
+    _migrate_from_json()
     rid = record.get("id", "")
     created = record.get("created_at", "")
     logger.debug(f"[History] 保存记录: id={rid}, status={record.get('status')}")
@@ -152,37 +175,47 @@ def delete_history(record_id: str) -> bool:
 
 def query_history(q: str = '', page: int = 1, per_page: int = 12) -> dict:
     """支持搜索 + 分页的历史记录查询。
-    返回 { records: [...], total: N, page: N, pages: N }"""
+    返回 { records: [...], total: N, page: N, pages: N }
+    搜索在 SQL 层完成（LIKE 匹配 JSON blob 中的文本字段）。"""
+    _migrate_from_json()
     with _db_lock:
         conn = _get_conn()
         try:
-            rows = conn.execute(
-                "SELECT data FROM history ORDER BY created_at DESC"
-            ).fetchall()
-            records = [json.loads(row[0]) for row in rows]
+            if q:
+                # SQL 层搜索：对 JSON blob 做 LIKE 匹配（覆盖 scene_description / edit_prompt / edit_summary / compliance_analysis）
+                pattern = f"%{q}%"
+                count_row = conn.execute(
+                    "SELECT COUNT(*) FROM history WHERE data LIKE ? COLLATE NOCASE",
+                    (pattern,),
+                ).fetchone()
+                total = count_row[0]
+
+                pages = max(1, (total + per_page - 1) // per_page)
+                page = max(1, min(page, pages))
+                offset = (page - 1) * per_page
+
+                rows = conn.execute(
+                    "SELECT data FROM history WHERE data LIKE ? COLLATE NOCASE "
+                    "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                    (pattern, per_page, offset),
+                ).fetchall()
+                records = [json.loads(row[0]) for row in rows]
+            else:
+                # 无搜索：直接分页
+                total = conn.execute("SELECT COUNT(*) FROM history").fetchone()[0]
+                pages = max(1, (total + per_page - 1) // per_page)
+                page = max(1, min(page, pages))
+                offset = (page - 1) * per_page
+
+                rows = conn.execute(
+                    "SELECT data FROM history ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                    (per_page, offset),
+                ).fetchall()
+                records = [json.loads(row[0]) for row in rows]
         except Exception as e:
-            logger.warning(f"[History] 读取失败: {e}")
-            records = []
+            logger.warning(f"[History] 查询失败: {e}")
+            records, total, page, pages = [], 0, 1, 1
         finally:
             conn.close()
-
-    # 应用层搜索（JSON blob 无法 SQL 级过滤）
-    if q:
-        q_lower = q.lower()
-        searchable_keys = ('scene_description', 'edit_prompt', 'edit_summary', 'compliance_analysis')
-        filtered = []
-        for r in records:
-            for key in searchable_keys:
-                val = r.get(key, '')
-                if val and q_lower in str(val).lower():
-                    filtered.append(r)
-                    break
-        records = filtered
-
-    total = len(records)
-    pages = max(1, (total + per_page - 1) // per_page)
-    page = max(1, min(page, pages))
-    start = (page - 1) * per_page
-    records = records[start:start + per_page]
 
     return {'records': records, 'total': total, 'page': page, 'pages': pages}
