@@ -3,7 +3,7 @@
 import json
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -17,7 +17,7 @@ from services.prompt_gen import generate_edit_prompt, generate_edit_summary
 from services.image_edit import generate_edited_image
 from services.history import save_history, update_history
 
-from config.settings import settings
+from config.settings import settings, UPLOAD_DIR
 
 pipeline_bp = Blueprint("pipeline", __name__)
 
@@ -30,9 +30,10 @@ _TIMEOUT_COMPLIANCE = 310   # MaxKB 查询 300s
 _TIMEOUT_PROMPT = 130       # 提示词生成 120s
 _TIMEOUT_IMAGE_EDIT = 310   # GPT-image 编辑 300s
 
-# 图片保存目录（按类别分子目录）
-UPLOAD_DIR = Path(__file__).resolve().parent.parent / "data" / "uploads" / "images"
+# 确保图片子目录存在
 IMAGE_SUBDIRS = ("original", "generated", "refined", "thumb")
+for _sub in IMAGE_SUBDIRS:
+    (UPLOAD_DIR / _sub).mkdir(parents=True, exist_ok=True)
 for _sub in IMAGE_SUBDIRS:
     (UPLOAD_DIR / _sub).mkdir(parents=True, exist_ok=True)
 
@@ -76,13 +77,15 @@ def api_recognize():
 
     image_format = detect_image_format(image.filename or "", image.content_type or "")
     logger.info(f"[API] 图片信息: 文件名={image.filename}, 大小={len(image_bytes)} bytes, 格式={image_format}")
+    t0 = time.time()
     future = executor.submit(recognize_with_mimo, image_bytes, image_format)
     try:
         result = future.result(timeout=_TIMEOUT_RECOGNIZE)
     except FuturesTimeoutError:
         logger.error("[API] /api/recognize 超时")
         return jsonify({"success": False, "error": "识别超时，请重试"}), 504
-    logger.info(f"[API] /api/recognize 完成 | success={result.get('success')}")
+    result["time_ms"] = int((time.time() - t0) * 1000)
+    logger.info(f"[API] /api/recognize 完成 | 耗时: {result['time_ms']}ms | success={result.get('success')}")
     return jsonify(result)
 
 
@@ -98,13 +101,15 @@ def api_analyze_compliance():
         return jsonify({"success": False, "error": "缺少场景描述"}), 400
 
     logger.info(f"[API] 场景描述长度: {len(scene_description)} 字符 | 用户角色: {user_role}")
+    t0 = time.time()
     future = executor.submit(analyze_compliance_with_maxkb, scene_description, user_role)
     try:
         result = future.result(timeout=_TIMEOUT_COMPLIANCE)
     except FuturesTimeoutError:
         logger.error("[API] /api/analyze-compliance 超时")
         return jsonify({"success": False, "error": "合规分析超时，请重试"}), 504
-    logger.info(f"[API] /api/analyze-compliance 完成 | success={result.get('success')}")
+    result["time_ms"] = int((time.time() - t0) * 1000)
+    logger.info(f"[API] /api/analyze-compliance 完成 | 耗时: {result['time_ms']}ms | success={result.get('success')}")
     return jsonify(result)
 
 
@@ -120,13 +125,15 @@ def api_generate_prompt():
         return jsonify({"success": False, "error": "缺少必要参数"}), 400
 
     logger.info(f"[API] 场景描述: {len(scene_description)} 字符 | 合规分析: {len(compliance_analysis)} 字符")
+    t0 = time.time()
     future = executor.submit(generate_edit_prompt, scene_description, compliance_analysis)
     try:
         result = future.result(timeout=_TIMEOUT_PROMPT)
     except FuturesTimeoutError:
         logger.error("[API] /api/generate-prompt 超时")
         return jsonify({"success": False, "error": "提示词生成超时，请重试"}), 504
-    logger.info(f"[API] /api/generate-prompt 完成 | success={result.get('success')}")
+    result["time_ms"] = int((time.time() - t0) * 1000)
+    logger.info(f"[API] /api/generate-prompt 完成 | 耗时: {result['time_ms']}ms | success={result.get('success')}")
     return jsonify(result)
 
 
@@ -397,14 +404,14 @@ def api_full_pipeline_stream():
             logger.debug(f"[SSE-Compliance] 问题 {idx+1} 完成 | 回答长度: {len(answer)} 字符")
             return idx, answer, sources
 
-        futures = [executor.submit(_fetch_one, i, q) for i, q in enumerate(queries)]
-        for f in futures:
+        futures = {executor.submit(_fetch_one, i, q): i for i, q in enumerate(queries)}
+        for f in as_completed(futures):
             try:
                 idx, answer, sources = f.result(timeout=_TIMEOUT_COMPLIANCE)
             except FuturesTimeoutError:
                 logger.error(f"[SSE-Compliance] 查询超时")
                 continue
-            # 按完成顺序推送事件
+            # 按完成顺序推送事件（谁先完成谁先推送）
             yield {"type": "query_start", "index": idx, "question": sub_queries[idx]}
             if answer:
                 yield {"type": "content", "index": idx, "text": answer}

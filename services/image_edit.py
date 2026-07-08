@@ -61,7 +61,7 @@ def generate_edited_image(image_bytes: bytes, image_format: str, prompt: str) ->
             image_file.name = f"image.{image_format}"
 
             result = client.images.edit(
-                model="gpt-image-2",
+                model=settings.OPENAI_MODEL_NAME or "gpt-image-2",
                 image=image_file,
                 prompt=prompt,
                 n=1,

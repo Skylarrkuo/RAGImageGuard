@@ -4,14 +4,11 @@ from pathlib import Path
 
 from flask import Blueprint, Response, jsonify
 
-from config.settings import settings
+from config.settings import settings, UPLOAD_DIR
 from core.logging import logger
 from core.utils import get_mime
 
 system_bp = Blueprint("system", __name__)
-
-# 图片保存目录（与 pipeline.py 中的 UPLOAD_DIR 一致）
-UPLOAD_DIR = Path(__file__).resolve().parent.parent / "data" / "uploads" / "images"
 
 
 @system_bp.route("/images/<path:filepath>")
