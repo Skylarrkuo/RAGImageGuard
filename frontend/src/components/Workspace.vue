@@ -54,6 +54,19 @@
           返回上传
         </button>
       </div>
+
+      <!-- Step2 输入 Modal -->
+      <AppModal
+        :visible="showPromptModal"
+        mode="prompt"
+        title="场景描述"
+        message="请输入场景描述以进行合规分析："
+        placeholder="输入场景描述..."
+        confirm-text="开始分析"
+        cancel-text="返回"
+        @confirm="onStep2Confirm"
+        @cancel="onStep2Cancel"
+      />
     </div>
   </div>
 </template>
@@ -65,6 +78,7 @@ import { recognize, analyzeCompliance, generatePrompt, refineImage, completeFlow
 import PipelineSidebar from './PipelineSidebar.vue'
 import ContentPanel from './ContentPanel.vue'
 import SummaryBar from './SummaryBar.vue'
+import AppModal from './AppModal.vue'
 
 const props = defineProps({
   file: { type: File, required: true },
@@ -72,6 +86,9 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['back', 'update:loading'])
+
+// Step2 prompt modal
+const showPromptModal = ref(false)
 
 // Pipeline state
 const title = ref('诊断进行中...')
@@ -356,7 +373,11 @@ async function runStep1Only() {
 }
 
 async function runStep2Only() {
-  const desc = prompt('请输入场景描述：')
+  showPromptModal.value = true
+}
+
+async function onStep2Confirm(desc) {
+  showPromptModal.value = false
   if (!desc) {
     emit('back')
     return
@@ -376,6 +397,11 @@ async function runStep2Only() {
     setNodeState('step2', 'error')
     setStepContent('step2', `<div style="color:var(--accent)">✗ ${data.error}</div>`)
   }
+}
+
+function onStep2Cancel() {
+  showPromptModal.value = false
+  emit('back')
 }
 
 // ── Single-step retry ──
@@ -562,3 +588,60 @@ onMounted(() => {
   runAnalysis()
 })
 </script>
+
+<style scoped>
+.workspace {
+  max-width: 1400px;
+  width: 100%;
+  height: 100%;
+  margin: 0 auto;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.pipeline-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 1rem;
+  border-bottom: 2px solid var(--fg);
+  margin-bottom: 1.5rem;
+  flex-shrink: 0;
+}
+.pipeline-title {
+  font-family: 'Playfair Display', serif;
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+.pipeline-status {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.pipeline-status .dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--neutral-400);
+}
+.pipeline-status .dot.running { background: var(--accent); animation: pulse 1s infinite; }
+.pipeline-status .dot.done { background: var(--success); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+.ws-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.5rem;
+  flex: 1;
+  overflow: hidden;
+}
+@media (min-width: 1024px) {
+  .ws-layout { grid-template-columns: 340px 1fr; }
+}
+</style>
