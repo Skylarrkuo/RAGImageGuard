@@ -3,6 +3,7 @@
 import base64
 import io
 import os
+import threading
 import time
 
 import requests
@@ -10,6 +11,9 @@ import requests
 from config.settings import settings
 from core.logging import logger
 from core.utils import get_image_dimensions, pick_gpt_image_size
+
+# 保护 os.environ 读写的全局锁
+_env_lock = threading.Lock()
 
 
 def generate_edited_image(image_bytes: bytes, image_format: str, prompt: str) -> dict:
@@ -42,11 +46,12 @@ def generate_edited_image(image_bytes: bytes, image_format: str, prompt: str) ->
 
     def _call_api():
         """单次 API 调用"""
-        # 清除代理环境变量
-        saved_env = {}
-        for k in proxy_env_keys:
-            if k in os.environ:
-                saved_env[k] = os.environ.pop(k)
+        # 清除代理环境变量（线程安全）
+        with _env_lock:
+            saved_env = {}
+            for k in proxy_env_keys:
+                if k in os.environ:
+                    saved_env[k] = os.environ.pop(k)
         try:
             timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
             http_client = httpx.Client(proxy=None, timeout=timeout)
@@ -71,8 +76,9 @@ def generate_edited_image(image_bytes: bytes, image_format: str, prompt: str) ->
                 dl_resp = requests.get(image_url, timeout=120)
                 return dl_resp.content
         finally:
-            for k, v in saved_env.items():
-                os.environ[k] = v
+            with _env_lock:
+                for k, v in saved_env.items():
+                    os.environ[k] = v
 
     # 重试逻辑：最多 3 次，遇到连接/超时错误重试
     max_retries = 3

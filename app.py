@@ -11,9 +11,12 @@ from pathlib import Path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from flask import Flask
+from functools import wraps
+
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 
+from config.settings import settings
 from core.logging import setup_logging
 from routes import register_all_blueprints
 
@@ -23,7 +26,24 @@ def create_app() -> Flask:
     setup_logging()
 
     app = Flask(__name__)
-    CORS(app, resources={r"/*": {"origins": "*"}})
+
+    # 上传大小限制（防止 OOM）
+    app.config["MAX_CONTENT_LENGTH"] = settings.MAX_UPLOAD_MB * 1024 * 1024
+
+    # CORS 配置 — 仅允许可信来源
+    allowed = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
+    CORS(app, origins=allowed)
+
+    # API Key 认证中间件（配置了 API_KEY 时生效）
+    @app.before_request
+    def _check_api_key():
+        if settings.API_KEY:
+            # 仅保护业务 API，放行健康检查和图片服务
+            if request.path.startswith("/api/config-check") or request.path.startswith("/images"):
+                return
+            key = request.headers.get("X-API-Key", "")
+            if key != settings.API_KEY:
+                return jsonify({"error": "未授权：缺少或无效的 API Key"}), 401
 
     register_all_blueprints(app)
 

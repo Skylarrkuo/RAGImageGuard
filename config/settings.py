@@ -26,5 +26,10 @@ class _Settings:
     OPENAI_API_BASE: str = os.getenv("OPENAI_API_BASE", "")
     OPENAI_MODEL_NAME: str = os.getenv("OPENAI_MODEL_NAME", "")
 
+    # 安全配置
+    ALLOWED_ORIGINS: str = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:8001")
+    MAX_UPLOAD_MB: int = int(os.getenv("MAX_UPLOAD_MB", "20"))
+    API_KEY: str = os.getenv("API_KEY", "")
+
 
 settings = _Settings()
