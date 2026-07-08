@@ -27,7 +27,7 @@
 2. **合规分析**：从场景描述提取 4-5 个子问题（双 prompt 策略 + 3 次重试），携带完整场景描述并行查询 MaxKB 知识库获取国家标准合规判断
 3. **提示词生成**：基于完整合规分析结果（不截断），AI 生成图片编辑提示词，自动包含移除无关路人的指令，max_tokens=10000
 4. **智能改图**：自动检测原图宽高比，选择最接近的 GPT-image-2 尺寸（竖屏→1024x1536，横屏→1536x1024，方形→1024x1024）
-5. **补充编辑**：用户手动输入修正提示词，对 Step 4 生成的图片进行二次精修，结果保存到历史记录
+5. **补充编辑**（可选）：用户可手动输入修正提示词进行二次精修，也可点击「结束」跳过此步直接完成流程。结果保存到历史记录
 
 ## 目录结构
 
@@ -47,12 +47,12 @@ RAG_PNG/
 │   └── history.py          # 历史记录 JSON 存储（save + update）
 ├── routes/
 │   ├── __init__.py         # Blueprint 注册中心（register_all_blueprints）
-│   ├── pipeline.py         # 流水线路由（5 步流程、SSE 流式、补充编辑、缩略图生成）
+│   ├── pipeline.py         # 流水线路由（5 步流程、SSE 流式、补充编辑、结束流程、缩略图生成）
 │   ├── history.py          # 历史记录 CRUD 路由
 │   └── system.py           # 系统路由（配置检查、图片服务，支持子目录路径）
 ├── frontend/
 │   └── src/
-│       ├── api/index.js    # API 调用封装（含 refineImage）
+│       ├── api/index.js    # API 调用封装（含 refineImage、completeFlow）
 │       ├── App.vue         # 主应用（上传 / 工作台 / 历史 三页切换）
 │       └── components/
 │           ├── UploadPage.vue      # 上传页面
@@ -83,6 +83,7 @@ RAG_PNG/
 | `/api/generate-prompt` | POST | Step 3: 生成编辑提示词 |
 | `/api/generate-image` | POST | Step 4: AI 改图 |
 | `/api/refine-image` | POST | Step 5: 补充编辑（图片 + 提示词 + history_id） |
+| `/api/complete-flow` | POST | 结束流程（跳过 Step 5，标记完成） |
 | `/api/full-pipeline` | POST | 完整流水线（同步） |
 | `/api/full-pipeline-stream` | POST | 完整流水线（SSE 实时推送） |
 | `/api/history` | GET | 历史记录列表 |
@@ -137,6 +138,8 @@ npm run dev   # 运行在 http://localhost:5173
 - **缩略图自动生成**：`_save_with_thumbnail()` 保存原图时同步生成长边 400px 的 JPEG 缩略图
 - **图片比例自适应**：`pick_gpt_image_size()` 根据原图宽高比选择 GPT-image-2 最接近的尺寸
 - 历史记录存储在 `data/history.json`，支持 `save_history()` 和 `update_history()` 两种操作
+- **流程结束**：`/api/complete-flow` 端点处理用户跳过 Step 5 的场景，标记 `status: "completed"` + `step5_skipped: true`
+- **Step 5 计时**：`api_refine_image` 记录 `step5_ms` 耗时到历史记录
 
 ### 前端 (Vue 3)
 
@@ -146,8 +149,9 @@ npm run dev   # 运行在 http://localhost:5173
 - SSE 流式解析：`consumeSSEStream()` 函数处理服务端推送事件
 - 步骤重试：每个步骤失败后可单独重试，无需重新开始（含 Step 5）
 - Markdown 渲染：合规分析结果使用 `marked` 库渲染
-- **历史记录**：列表页加载缩略图（`thumbUrl()` 函数），详情页显示原图/生成图对比滑块
-- **补充编辑**：ContentPanel 中 Step 5 输入区域（预览图 + 文本框 + 按钮），结果用对比滑块展示
+- **历史记录**：列表页加载缩略图（`thumbUrl()` 函数），详情页显示原图/生成图对比滑块，支持精修图对比和 Step 5 信息展示
+- **补充编辑**：ContentPanel 中 Step 5 输入区域（缩略图预览 + 文本框 + 按钮），提供「开始修正」和「结束」两个操作
+- **图片预览**：Step 4/5 生成图片默认显示缩略图（240px），点击打开全屏 Lightbox 进行修改前后对比（拖拽滑块），支持 Escape 关闭
 - 图片居中显示，max-width 900px
 
 ## 开发注意事项

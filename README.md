@@ -8,7 +8,7 @@
 2. **合规分析** — 从场景描述提取子问题，并行查询 MaxKB 知识库获取国家标准合规判断
 3. **提示词生成** — 基于完整合规分析结果，AI 生成图片编辑提示词（自动移除无关路人）
 4. **智能改图** — GPT-image-2 自动检测图片比例，生成对应尺寸的修复图片
-5. **补充编辑** — 用户可手动输入修正提示词，对已修改图片进行二次精修
+5. **补充编辑**（可选）— 用户可手动输入修正提示词进行二次精修，也可点击「结束」跳过直接完成流程
 
 ## 项目结构
 
@@ -28,12 +28,12 @@ RAG_PNG/
 │   └── history.py          # 历史记录 JSON 存储（含更新功能）
 ├── routes/
 │   ├── __init__.py         # Blueprint 注册中心
-│   ├── pipeline.py         # 流水线路由（5 步流程、SSE 流式、补充编辑）
+│   ├── pipeline.py         # 流水线路由（5 步流程、SSE 流式、补充编辑、结束流程）
 │   ├── history.py          # 历史记录 CRUD
 │   └── system.py           # 配置检查、图片服务（支持子目录）
 ├── frontend/
 │   └── src/
-│       ├── api/index.js    # API 调用封装
+│       ├── api/index.js    # API 调用封装（含 completeFlow）
 │       ├── App.vue         # 主应用（上传 / 工作台 / 历史 三页切换）
 │       └── components/
 │           ├── UploadPage.vue      # 上传页面
@@ -99,6 +99,7 @@ npm run dev
 | `/api/generate-prompt` | POST | Step 3: 生成编辑提示词 |
 | `/api/generate-image` | POST | Step 4: AI 改图 |
 | `/api/refine-image` | POST | Step 5: 补充编辑 |
+| `/api/complete-flow` | POST | 结束流程（跳过 Step 5） |
 | `/api/full-pipeline` | POST | 完整流水线（同步） |
 | `/api/full-pipeline-stream` | POST | 完整流水线（SSE 实时推送） |
 | `/api/history` | GET | 历史记录列表 |
