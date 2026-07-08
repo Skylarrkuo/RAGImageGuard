@@ -29,12 +29,7 @@ def app(tmp_path, monkeypatch):
     """创建测试用 Flask 应用（使用临时数据库）"""
     # 重载 settings 以读取新的环境变量
     from config.settings import settings
-    settings.MIMO_API_KEY = "test-key"
-    settings.MIMO_API_BASE = "http://test"
-    settings.OPENAI_API_KEY = "test-key"
-    settings.OPENAI_API_BASE = "http://test"
-    settings.MAXKB_SCENE_OPTIMIZE_BASE_URL = "http://test"
-    settings.MAXKB_SCENE_OPTIMIZE_API_KEY = "test-key"
+    settings.reload()
 
     # 指向临时数据库
     import services.history as hist_mod
