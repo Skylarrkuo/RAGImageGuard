@@ -61,7 +61,8 @@ RAG_PNG/
 │           ├── PipelineSidebar.vue # 侧边栏步骤节点
 │           ├── ContentPanel.vue    # 内容展示 + 补充编辑输入
 │           ├── SummaryBar.vue      # 耗时统计栏
-│           └── HistoryPage.vue     # 历史记录列表 + 详情对比
+│           ├── HistoryPage.vue     # 历史记录列表 + 详情对比（搜索 + 分页）
+│           └── AppModal.vue        # 自定义 Modal 组件（prompt/confirm 两种模式）
 ├── data/
 │   ├── history.db          # 历史记录 SQLite 数据库（自动从 history.json 迁移）
 │   └── uploads/images/     # 图片存储（按类别分目录）
@@ -71,7 +72,13 @@ RAG_PNG/
 │       └── thumb/          # 缩略图（长边 400px，JPEG）
 ├── .env                    # 环境变量（不提交）
 ├── .env.example            # 环境变量模板
-└── requirements.txt        # Python 依赖
+├── requirements.txt        # Python 依赖
+├── pytest.ini              # pytest 配置
+└── tests/
+    ├── conftest.py         # 测试夹具（Flask 应用、测试客户端、示例图片）
+    ├── test_utils.py       # core/utils.py 工具函数测试
+    ├── test_history.py     # services/history.py 历史记录测试
+    └── test_routes.py      # API 路由测试
 ```
 
 ## API 端点
@@ -87,7 +94,7 @@ RAG_PNG/
 | `/api/complete-flow` | POST | 结束流程（跳过 Step 5，标记完成） |
 | `/api/full-pipeline` | POST | 完整流水线（同步） |
 | `/api/full-pipeline-stream` | POST | 完整流水线（SSE 实时推送） |
-| `/api/history` | GET | 历史记录列表 |
+| `/api/history` | GET | 历史记录列表（支持 `?q=&page=1&per_page=12` 搜索分页） |
 | `/api/history/<record_id>` | GET | 历史记录详情 |
 | `/api/history/<record_id>` | DELETE | 删除历史记录 |
 | `/images/<path:filepath>` | GET | 获取图片（支持子目录，如 `original/abc.jpg`） |
@@ -126,6 +133,10 @@ python app.py  # 运行在 http://localhost:8001
 cd frontend
 npm install
 npm run dev   # 运行在 http://localhost:5173
+
+# 运行测试
+conda activate rag-png
+pytest tests/ -v
 ```
 
 ## 关键实现细节
@@ -143,13 +154,16 @@ npm run dev   # 运行在 http://localhost:5173
 - **图片存储按类别分目录**：`original/`、`generated/`、`refined/`、`thumb/`
 - **缩略图自动生成**：`_save_with_thumbnail()` 保存原图时同步生成长边 400px 的 JPEG 缩略图
 - **图片比例自适应**：`pick_gpt_image_size()` 根据原图宽高比选择 GPT-image-2 最接近的尺寸
-- 历史记录存储在 `data/history.db`（SQLite），支持 `save_history()`、`update_history()`、`delete_history()` 三种操作，启动时自动从 `history.json` 迁移
+- **大图自动缩放**：`resize_for_api()` 在发送到 MiMo/GPT-Image 前自动缩放长边超过 2048px 的图片，输出 JPEG quality=85，减少传输体积
+- 历史记录存储在 `data/history.db`（SQLite），支持 `save_history()`、`update_history()`、`delete_history()`、`query_history()` 四种操作，启动时自动从 `history.json` 迁移
+- **历史搜索 + 分页**：`query_history(q, page, per_page)` 支持关键词搜索（匹配 scene_description/edit_prompt/edit_summary/compliance_analysis）和分页查询
 - **流程结束**：`/api/complete-flow` 端点处理用户跳过 Step 5 的场景，标记 `status: "completed"` + `step5_skipped: true`
 - **Step 5 计时**：`api_refine_image` 记录 `step5_ms` 耗时到历史记录
 
 ### 前端 (Vue 3)
 
 - **API 统一拦截器**：`request()` 函数自动检查 `resp.ok`，非 2xx 响应解析 JSON 提取 error 并抛出异常
+- **自定义 Modal 组件**：`AppModal.vue` 替代原生 `prompt()`/`confirm()`，支持 `prompt`（带输入框）和 `confirm`（确认对话框）两种模式，Escape 关闭
 - 三页结构：`UploadPage`（上传）→ `Workspace`（工作台）→ `HistoryPage`（历史记录）
 - 工作台支持 **5 步流程**：识别 → 合规分析 → 提示词生成 → 图片编辑 → 补充编辑
 - 支持 3 种运行模式：`full`（完整流水线）、`step1`（仅识别）、`step2`（仅合规分析）
@@ -159,6 +173,8 @@ npm run dev   # 运行在 http://localhost:5173
 - **历史记录**：列表页加载缩略图（`thumbUrl()` 函数），详情页显示原图/生成图对比滑块，支持精修图对比和 Step 5 信息展示
 - **补充编辑**：ContentPanel 中 Step 5 输入区域（缩略图预览 + 文本框 + 按钮），提供「开始修正」和「结束」两个操作
 - **图片预览**：Step 4/5 生成图片默认显示缩略图（240px），点击打开全屏 Lightbox 进行修改前后对比（拖拽滑块），支持 Escape 关闭
+- **历史搜索 + 分页**：HistoryPage 支持关键词搜索（debounce 300ms）和分页切换，`getHistory(q, page, perPage)` 传参
+- **CSS 组件化**：所有组件使用 `<style scoped>` 隔离样式，全局 `style.css` 仅保留 reset/变量/按钮/markdown/对比滑块等共享样式
 - 图片居中显示，max-width 900px
 
 ## 开发注意事项

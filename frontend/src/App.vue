@@ -59,3 +59,29 @@ function goBack() {
   selectedFile.value = null
 }
 </script>
+
+<style scoped>
+.loading-bar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: var(--fg);
+  z-index: 100;
+  overflow: hidden;
+  display: none;
+}
+.loading-bar.active { display: block; }
+.loading-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--accent);
+  animation: loadSlide 1.2s ease-in-out infinite;
+  transform-origin: left;
+}
+@keyframes loadSlide {
+  0% { transform: translateX(-100%) scaleX(0.4); }
+  50% { transform: translateX(0%) scaleX(0.3); }
+  100% { transform: translateX(100%) scaleX(0.4); }
+}
+</style>

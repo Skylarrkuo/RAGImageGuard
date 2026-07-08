@@ -27,3 +27,31 @@ defineProps({
   total: { type: String, default: '—' },
 })
 </script>
+
+<style scoped>
+.summary-bar {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border: 1px solid var(--fg);
+  margin-top: 1.5rem;
+}
+.summary-item {
+  padding: 1rem;
+  border-right: 1px solid var(--fg);
+  text-align: center;
+}
+.summary-item:last-child { border-right: none; }
+.summary-item-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.5rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--neutral-500);
+  margin-bottom: 0.25rem;
+}
+.summary-item-value {
+  font-family: 'Playfair Display', serif;
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+</style>
