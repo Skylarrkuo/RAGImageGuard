@@ -16,6 +16,7 @@
 | **RAG 知识库** | MaxKB（国家标准检索） |
 | **图片编辑** | OpenAI GPT-image-2 |
 | **图片处理** | Pillow（尺寸检测 + 缩略图生成） |
+| **安全** | CORS 白名单 + 上传大小限制 + API Key 认证 + 线程安全锁 |
 
 ## 核心业务流程
 
@@ -33,7 +34,7 @@
 
 ```
 RAG_PNG/
-├── app.py                  # Flask 启动入口（应用工厂 create_app()）
+├── app.py                  # Flask 启动入口（应用工厂 create_app()，含安全中间件）
 ├── config/
 │   └── settings.py         # 环境变量配置加载
 ├── core/
@@ -96,6 +97,11 @@ RAG_PNG/
 必须在 `.env` 文件中配置（参考 `.env.example`）：
 
 ```bash
+# ---- 安全配置 ----
+API_KEY=                          # API 访问密钥（留空=不启用认证，生产环境务必设置）
+ALLOWED_ORIGINS=http://localhost:5173,http://localhost:8001  # CORS 允许的来源（逗号分隔）
+MAX_UPLOAD_MB=20                  # 上传文件大小限制（MB）
+
 # MiMo 视觉/LLM
 MIMO_API_KEY=xxx
 MIMO_API_BASE=https://xxx
@@ -157,9 +163,13 @@ npm run dev   # 运行在 http://localhost:5173
 ## 开发注意事项
 
 1. **API 调用超时**：MiMo 识别 120s，MaxKB 查询 300s，GPT-image 编辑 300s
-2. **代理设置**：OpenAI 客户端显式禁用代理 (`proxy=None`)
+2. **代理设置**：OpenAI 客户端显式禁用代理 (`proxy=None`)，环境变量操作通过 `threading.Lock` 保证线程安全
 3. **并发控制**：MaxKB 并行查询限制为 4 路
 4. **文件命名**：上传图片 `original/{uuid}.{ext}`，生成图片 `generated/{uuid}.png`，精修图片 `refined/{uuid}.png`，缩略图 `thumb/thumb_{uuid}.jpg`
 5. **前端开发**：API 基础路径为空字符串（同源），Vite 开发服务器代理到后端 8001 端口
 6. **图片安全**：`/images/<path:filepath>` 路由含目录遍历防护（`resolve()` + 前缀校验）
 7. **Pillow 依赖**：`requirements.txt` 中 `Pillow>=10.0.0`，用于图片尺寸检测和缩略图生成
+8. **CORS 安全**：`ALLOWED_ORIGINS` 环境变量控制允许的来源，默认仅允许 localhost 开发地址，生产环境需配置实际域名
+9. **上传限制**：`MAX_CONTENT_LENGTH` 由 `MAX_UPLOAD_MB` 控制（默认 20MB），超限自动返回 413
+10. **API 认证**：配置 `API_KEY` 后，所有 `/api/*` 请求需携带 `X-API-Key` 头（`/api/config-check` 和 `/images/*` 自动放行）；留空则不启用认证
+11. **线程安全**：`services/image_edit.py` 中代理环境变量的清除/恢复通过全局 `_env_lock` 保护，避免并发请求互相污染

@@ -71,6 +71,14 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
+**安全相关配置**（可选，生产环境建议设置）：
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `API_KEY` | 空（不启用） | API 访问密钥，设置后请求需携带 `X-API-Key` 头 |
+| `ALLOWED_ORIGINS` | `http://localhost:5173,http://localhost:8001` | CORS 允许的来源（逗号分隔） |
+| `MAX_UPLOAD_MB` | `20` | 上传文件大小限制（MB） |
+
 ### 启动后端
 
 ```bash
@@ -115,3 +123,4 @@ npm run dev
 - **RAG 知识库**: MaxKB（国家标准检索）
 - **图片编辑**: OpenAI GPT-image-2
 - **图片处理**: Pillow（尺寸检测 + 缩略图生成）
+- **安全**: CORS 白名单 + 上传大小限制 + API Key 认证 + 线程安全锁
