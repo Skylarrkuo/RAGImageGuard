@@ -1,11 +1,26 @@
 const API_BASE = ''
 
 /**
+ * 统一请求拦截器 — 检查 HTTP 状态码，非 2xx 自动抛错
+ */
+async function request(url, options) {
+  const resp = await fetch(url, options)
+  if (!resp.ok) {
+    let errorMsg = `请求失败 (${resp.status})`
+    try {
+      const body = await resp.json()
+      errorMsg = body.error || errorMsg
+    } catch { /* 非 JSON 响应，使用默认消息 */ }
+    throw new Error(errorMsg)
+  }
+  return resp.json()
+}
+
+/**
  * 检查配置
  */
 export async function checkConfig() {
-  const resp = await fetch(`${API_BASE}/api/config-check`)
-  return resp.json()
+  return request(`${API_BASE}/api/config-check`)
 }
 
 /**
@@ -14,8 +29,7 @@ export async function checkConfig() {
 export async function recognize(image) {
   const formData = new FormData()
   formData.append('image', image)
-  const resp = await fetch(`${API_BASE}/api/recognize`, { method: 'POST', body: formData })
-  return resp.json()
+  return request(`${API_BASE}/api/recognize`, { method: 'POST', body: formData })
 }
 
 /**
@@ -25,8 +39,7 @@ export async function analyzeCompliance(sceneDescription, userRole = 'tourist') 
   const formData = new FormData()
   formData.append('scene_description', sceneDescription)
   formData.append('user_role', userRole)
-  const resp = await fetch(`${API_BASE}/api/analyze-compliance`, { method: 'POST', body: formData })
-  return resp.json()
+  return request(`${API_BASE}/api/analyze-compliance`, { method: 'POST', body: formData })
 }
 
 /**
@@ -36,8 +49,7 @@ export async function generatePrompt(sceneDescription, complianceAnalysis) {
   const formData = new FormData()
   formData.append('scene_description', sceneDescription)
   formData.append('compliance_analysis', complianceAnalysis)
-  const resp = await fetch(`${API_BASE}/api/generate-prompt`, { method: 'POST', body: formData })
-  return resp.json()
+  return request(`${API_BASE}/api/generate-prompt`, { method: 'POST', body: formData })
 }
 
 /**
@@ -47,8 +59,7 @@ export async function generateImage(image, prompt) {
   const formData = new FormData()
   formData.append('image', image)
   formData.append('prompt', prompt)
-  const resp = await fetch(`${API_BASE}/api/generate-image`, { method: 'POST', body: formData })
-  return resp.json()
+  return request(`${API_BASE}/api/generate-image`, { method: 'POST', body: formData })
 }
 
 /**
@@ -59,8 +70,7 @@ export async function refineImage(image, prompt, historyId) {
   formData.append('image', image)
   formData.append('prompt', prompt)
   if (historyId) formData.append('history_id', historyId)
-  const resp = await fetch(`${API_BASE}/api/refine-image`, { method: 'POST', body: formData })
-  return resp.json()
+  return request(`${API_BASE}/api/refine-image`, { method: 'POST', body: formData })
 }
 
 /**
@@ -69,8 +79,7 @@ export async function refineImage(image, prompt, historyId) {
 export async function completeFlow(historyId) {
   const formData = new FormData()
   formData.append('history_id', historyId)
-  const resp = await fetch(`${API_BASE}/api/complete-flow`, { method: 'POST', body: formData })
-  return resp.json()
+  return request(`${API_BASE}/api/complete-flow`, { method: 'POST', body: formData })
 }
 
 /**
@@ -81,7 +90,14 @@ export async function fullPipelineStream(image) {
   const formData = new FormData()
   formData.append('image', image)
   const resp = await fetch(`${API_BASE}/api/full-pipeline-stream`, { method: 'POST', body: formData })
-  if (!resp.ok) throw new Error(resp.statusText)
+  if (!resp.ok) {
+    let errorMsg = `请求失败 (${resp.status})`
+    try {
+      const body = await resp.json()
+      errorMsg = body.error || errorMsg
+    } catch { /* 非 JSON 响应 */ }
+    throw new Error(errorMsg)
+  }
   return resp.body.getReader()
 }
 
@@ -113,16 +129,13 @@ export async function consumeSSEStream(reader, onEvent) {
  * 历史记录 API
  */
 export async function getHistory() {
-  const resp = await fetch(`${API_BASE}/api/history`)
-  return resp.json()
+  return request(`${API_BASE}/api/history`)
 }
 
 export async function getHistoryDetail(id) {
-  const resp = await fetch(`${API_BASE}/api/history/${id}`)
-  return resp.json()
+  return request(`${API_BASE}/api/history/${id}`)
 }
 
 export async function deleteHistory(id) {
-  const resp = await fetch(`${API_BASE}/api/history/${id}`, { method: 'DELETE' })
-  return resp.json()
+  return request(`${API_BASE}/api/history/${id}`, { method: 'DELETE' })
 }
