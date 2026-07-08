@@ -16,7 +16,7 @@
 | **RAG 知识库** | MaxKB（国家标准检索） |
 | **图片编辑** | OpenAI GPT-image-2 |
 | **图片处理** | Pillow（尺寸检测 + 缩略图生成） |
-| **安全** | CORS 白名单 + 上传大小限制 + API Key 认证 + 线程安全锁 |
+| **安全** | CORS 白名单 + 上传大小限制 + API Key 认证 + 线程安全锁 + 全局异常处理 |
 
 ## 核心业务流程
 
@@ -45,7 +45,7 @@ RAG_PNG/
 │   ├── maxkb.py            # Step 2: MaxKB 合规分析（子问题提取 + 重试 + 并行查询）
 │   ├── prompt_gen.py       # Step 3: 改图提示词生成（完整内容、移除路人）
 │   ├── image_edit.py       # Step 4: GPT-Image 图片编辑（自动比例检测）
-│   └── history.py          # 历史记录 JSON 存储（save + update）
+│   └── history.py          # 历史记录 SQLite 存储（save + update + delete）
 ├── routes/
 │   ├── __init__.py         # Blueprint 注册中心（register_all_blueprints）
 │   ├── pipeline.py         # 流水线路由（5 步流程、SSE 流式、补充编辑、结束流程、缩略图生成）
@@ -63,7 +63,7 @@ RAG_PNG/
 │           ├── SummaryBar.vue      # 耗时统计栏
 │           └── HistoryPage.vue     # 历史记录列表 + 详情对比
 ├── data/
-│   ├── history.json        # 历史记录文件
+│   ├── history.db          # 历史记录 SQLite 数据库（自动从 history.json 迁移）
 │   └── uploads/images/     # 图片存储（按类别分目录）
 │       ├── original/       # 上传的原始图片
 │       ├── generated/      # Step 4 生成的图片
@@ -135,7 +135,7 @@ npm run dev   # 运行在 http://localhost:5173
 - **分层结构**：`core/`（基础设施）→ `services/`（业务逻辑）→ `routes/`（HTTP 端点）→ `app.py`（入口）
 - **应用工厂**：`create_app()` 函数便于测试和扩展
 - **Blueprint 模块化**：`pipeline_bp`、`history_bp`、`system_bp` 分别注册
-- 使用 `ThreadPoolExecutor(max_workers=4)` 处理并发请求（定义在 `routes/pipeline.py`）
+- 使用模块级 `ThreadPoolExecutor(max_workers=4)` 处理并发请求（定义在 `routes/pipeline.py`，全局复用，含 SSE 并行查询）
 - MaxKB 合规分析采用 **4 路并行查询**：先用 MiMo 提取 4-5 个子问题（覆盖标识、安全、无障碍、消防、卫生等维度），再并行查询知识库
 - 子问题提取采用 **双 prompt 策略**：详细版 → 精简版 → 兜底问题，`_call_mimo()` 带 3 次重试
 - SSE 流式端点 (`/api/full-pipeline-stream`) 支持实时推送每个步骤进度，`done` 事件携带 `history_id`
@@ -143,12 +143,13 @@ npm run dev   # 运行在 http://localhost:5173
 - **图片存储按类别分目录**：`original/`、`generated/`、`refined/`、`thumb/`
 - **缩略图自动生成**：`_save_with_thumbnail()` 保存原图时同步生成长边 400px 的 JPEG 缩略图
 - **图片比例自适应**：`pick_gpt_image_size()` 根据原图宽高比选择 GPT-image-2 最接近的尺寸
-- 历史记录存储在 `data/history.json`，支持 `save_history()` 和 `update_history()` 两种操作
+- 历史记录存储在 `data/history.db`（SQLite），支持 `save_history()`、`update_history()`、`delete_history()` 三种操作，启动时自动从 `history.json` 迁移
 - **流程结束**：`/api/complete-flow` 端点处理用户跳过 Step 5 的场景，标记 `status: "completed"` + `step5_skipped: true`
 - **Step 5 计时**：`api_refine_image` 记录 `step5_ms` 耗时到历史记录
 
 ### 前端 (Vue 3)
 
+- **API 统一拦截器**：`request()` 函数自动检查 `resp.ok`，非 2xx 响应解析 JSON 提取 error 并抛出异常
 - 三页结构：`UploadPage`（上传）→ `Workspace`（工作台）→ `HistoryPage`（历史记录）
 - 工作台支持 **5 步流程**：识别 → 合规分析 → 提示词生成 → 图片编辑 → 补充编辑
 - 支持 3 种运行模式：`full`（完整流水线）、`step1`（仅识别）、`step2`（仅合规分析）
@@ -162,7 +163,7 @@ npm run dev   # 运行在 http://localhost:5173
 
 ## 开发注意事项
 
-1. **API 调用超时**：MiMo 识别 120s，MaxKB 查询 300s，GPT-image 编辑 300s
+1. **API 调用超时**：MiMo 识别 120s，MaxKB 查询 300s，GPT-image 编辑 300s；`future.result()` 带 timeout 参数，超时返回 504
 2. **代理设置**：OpenAI 客户端显式禁用代理 (`proxy=None`)，环境变量操作通过 `threading.Lock` 保证线程安全
 3. **并发控制**：MaxKB 并行查询限制为 4 路
 4. **文件命名**：上传图片 `original/{uuid}.{ext}`，生成图片 `generated/{uuid}.png`，精修图片 `refined/{uuid}.png`，缩略图 `thumb/thumb_{uuid}.jpg`
@@ -173,3 +174,6 @@ npm run dev   # 运行在 http://localhost:5173
 9. **上传限制**：`MAX_CONTENT_LENGTH` 由 `MAX_UPLOAD_MB` 控制（默认 20MB），超限自动返回 413
 10. **API 认证**：配置 `API_KEY` 后，所有 `/api/*` 请求需携带 `X-API-Key` 头（`/api/config-check` 和 `/images/*` 自动放行）；留空则不启用认证
 11. **线程安全**：`services/image_edit.py` 中代理环境变量的清除/恢复通过全局 `_env_lock` 保护，避免并发请求互相污染
+12. **全局异常处理**：`app.py` 注册 `errorhandler` 覆盖 413/404/500/Exception，所有错误返回 JSON 格式
+13. **线程池复用**：模块级 `executor` 被单步端点和 SSE 流式端点共用，避免反复创建销毁
+14. **前端错误处理**：`api/index.js` 的 `request()` 拦截器统一检查 HTTP 状态码，非 2xx 自动抛出带服务端错误信息的异常

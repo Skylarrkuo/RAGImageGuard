@@ -14,7 +14,7 @@
 
 ```
 RAG_PNG/
-├── app.py                  # Flask 启动入口（应用工厂 create_app()）
+├── app.py                  # Flask 启动入口（应用工厂 + 全局异常处理）
 ├── config/
 │   └── settings.py         # 环境变量配置加载
 ├── core/
@@ -25,7 +25,7 @@ RAG_PNG/
 │   ├── maxkb.py            # Step 2: MaxKB 合规分析（子问题提取 + 并行查询）
 │   ├── prompt_gen.py       # Step 3: 改图提示词生成
 │   ├── image_edit.py       # Step 4: GPT-Image 图片编辑（自动比例检测）
-│   └── history.py          # 历史记录 JSON 存储（含更新功能）
+│   └── history.py          # 历史记录 SQLite 存储（save + update + delete）
 ├── routes/
 │   ├── __init__.py         # Blueprint 注册中心
 │   ├── pipeline.py         # 流水线路由（5 步流程、SSE 流式、补充编辑、结束流程）
@@ -33,7 +33,7 @@ RAG_PNG/
 │   └── system.py           # 配置检查、图片服务（支持子目录）
 ├── frontend/
 │   └── src/
-│       ├── api/index.js    # API 调用封装（含 completeFlow）
+│       ├── api/index.js    # API 调用封装（统一拦截器 + completeFlow）
 │       ├── App.vue         # 主应用（上传 / 工作台 / 历史 三页切换）
 │       └── components/
 │           ├── UploadPage.vue      # 上传页面
@@ -43,6 +43,7 @@ RAG_PNG/
 │           ├── SummaryBar.vue      # 耗时统计栏
 │           └── HistoryPage.vue     # 历史记录列表 + 详情对比
 ├── data/
+│   ├── history.db          # 历史记录 SQLite 数据库
 │   └── uploads/images/     # 图片存储（按类别分目录）
 │       ├── original/       # 上传的原始图片
 │       ├── generated/      # Step 4 生成的图片
@@ -123,4 +124,5 @@ npm run dev
 - **RAG 知识库**: MaxKB（国家标准检索）
 - **图片编辑**: OpenAI GPT-image-2
 - **图片处理**: Pillow（尺寸检测 + 缩略图生成）
-- **安全**: CORS 白名单 + 上传大小限制 + API Key 认证 + 线程安全锁
+- **前端**: API 统一拦截器（`request()` 自动检查 HTTP 状态码，非 2xx 抛出异常）
+- **安全**: CORS 白名单 + 上传大小限制 + API Key 认证 + 线程安全锁 + 全局异常处理
