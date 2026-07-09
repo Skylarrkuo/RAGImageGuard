@@ -6,6 +6,7 @@ import threading
 from pathlib import Path
 
 from core.logging import logger
+from config.settings import UPLOAD_DIR
 
 # 数据库路径
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "history.db"
@@ -112,6 +113,7 @@ def save_history(record: dict):
     created = record.get("created_at", "")
     logger.debug(f"[History] 保存记录: id={rid}, status={record.get('status')}")
 
+    stale_records = []
     with _db_lock:
         conn = _get_conn()
         try:
@@ -122,15 +124,26 @@ def save_history(record: dict):
             # 超过上限时删除最旧的
             count = conn.execute("SELECT COUNT(*) FROM history").fetchone()[0]
             if count > MAX_RECORDS:
+                excess = count - MAX_RECORDS
+                # 先查出待删除记录的图片路径
+                rows = conn.execute(
+                    "SELECT data FROM history ORDER BY created_at ASC LIMIT ?",
+                    (excess,),
+                ).fetchall()
+                stale_records = [json.loads(r[0]) for r in rows]
                 conn.execute(
                     "DELETE FROM history WHERE id IN "
                     "(SELECT id FROM history ORDER BY created_at ASC LIMIT ?)",
-                    (count - MAX_RECORDS,),
+                    (excess,),
                 )
             conn.commit()
             logger.debug(f"[History] 保存成功")
         finally:
             conn.close()
+
+    # 清理被淘汰记录的图片文件（锁外执行）
+    for sr in stale_records:
+        _cleanup_image_files(sr)
 
 
 def update_history(record_id: str, patch: dict) -> bool:
@@ -157,20 +170,54 @@ def update_history(record_id: str, patch: dict) -> bool:
             conn.close()
 
 
+def _cleanup_image_files(record: dict):
+    """删除历史记录关联的图片文件（original / generated / refined / thumb）"""
+    image_keys = ("original_image", "generated_image", "refined_image")
+    for key in image_keys:
+        rel_path = record.get(key)
+        if not rel_path:
+            continue
+        # 删除主图文件
+        file_path = UPLOAD_DIR / rel_path
+        try:
+            if file_path.is_file():
+                file_path.unlink()
+                logger.debug(f"[History] 已删除图片: {file_path}")
+        except OSError as e:
+            logger.warning(f"[History] 删除图片失败 {file_path}: {e}")
+        # 删除对应缩略图：original/abc.jpg → thumb/thumb_abc.jpg
+        stem = Path(rel_path).stem
+        thumb_path = UPLOAD_DIR / "thumb" / f"thumb_{stem}.jpg"
+        try:
+            if thumb_path.is_file():
+                thumb_path.unlink()
+                logger.debug(f"[History] 已删除缩略图: {thumb_path}")
+        except OSError as e:
+            logger.warning(f"[History] 删除缩略图失败 {thumb_path}: {e}")
+
+
 def delete_history(record_id: str) -> bool:
-    """删除一条历史记录"""
+    """删除一条历史记录及其关联图片文件"""
     with _db_lock:
         conn = _get_conn()
         try:
+            # 先查询记录以获取图片路径
+            row = conn.execute(
+                "SELECT data FROM history WHERE id = ?", (record_id,)
+            ).fetchone()
+            if not row:
+                logger.warning(f"[History] 未找到记录: id={record_id}")
+                return False
+            record = json.loads(row[0])
             cursor = conn.execute("DELETE FROM history WHERE id = ?", (record_id,))
             conn.commit()
-            if cursor.rowcount > 0:
-                logger.debug(f"[History] 删除记录: id={record_id}")
-                return True
-            logger.warning(f"[History] 未找到记录: id={record_id}")
-            return False
+            logger.debug(f"[History] 删除记录: id={record_id}")
         finally:
             conn.close()
+
+    # 在锁外清理文件（避免持锁做 IO）
+    _cleanup_image_files(record)
+    return True
 
 
 def query_history(q: str = '', page: int = 1, per_page: int = 12) -> dict:
