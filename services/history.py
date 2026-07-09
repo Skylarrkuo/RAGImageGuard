@@ -46,10 +46,33 @@ def _get_conn() -> sqlite3.Connection:
         ")"
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON history(created_at DESC)")
+    conn.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS history_fts USING fts5("
+        "  id, scene_description, edit_prompt, edit_summary, compliance_analysis,"
+        "  tokenize='unicode61 remove_diacritics 2'"
+        ")"
+    )
     conn.commit()
     _local.conn = conn
     _local.db_path = DB_PATH
     return conn
+
+
+def _sync_fts(conn, record):
+    """同步单条记录到 FTS 索引（先删后插，保证幂等）"""
+    rid = record.get("id", "")
+    conn.execute("DELETE FROM history_fts WHERE id = ?", (rid,))
+    conn.execute(
+        "INSERT INTO history_fts (id, scene_description, edit_prompt, edit_summary, compliance_analysis) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (
+            rid,
+            record.get("scene_description", ""),
+            record.get("edit_prompt", ""),
+            record.get("edit_summary", ""),
+            record.get("compliance_analysis", ""),
+        ),
+    )
 
 
 def _migrate_from_json():
@@ -81,6 +104,7 @@ def _migrate_from_json():
                 "INSERT OR IGNORE INTO history (id, created_at, data) VALUES (?, ?, ?)",
                 (rid, created, json.dumps(record, ensure_ascii=False)),
             )
+            _sync_fts(conn, record)
         conn.commit()
         logger.info(f"[History] 从 history.json 迁移了 {len(records)} 条记录到 SQLite")
 
@@ -125,6 +149,7 @@ def save_history(record: dict):
             "INSERT OR REPLACE INTO history (id, created_at, data) VALUES (?, ?, ?)",
             (rid, created, json.dumps(record, ensure_ascii=False)),
         )
+        _sync_fts(conn, record)
         # 超过上限时删除最旧的
         count = conn.execute("SELECT COUNT(*) FROM history").fetchone()[0]
         if count > MAX_RECORDS:
@@ -135,11 +160,15 @@ def save_history(record: dict):
                 (excess,),
             ).fetchall()
             stale_records = [json.loads(r[0]) for r in rows]
+            stale_ids = [sr.get("id", "") for sr in stale_records]
             conn.execute(
                 "DELETE FROM history WHERE id IN "
                 "(SELECT id FROM history ORDER BY created_at ASC LIMIT ?)",
                 (excess,),
             )
+            # 同步清理 FTS 索引
+            for sid in stale_ids:
+                conn.execute("DELETE FROM history_fts WHERE id = ?", (sid,))
         conn.commit()
         logger.debug(f"[History] 保存成功")
 
@@ -164,6 +193,7 @@ def update_history(record_id: str, patch: dict) -> bool:
             "UPDATE history SET data = ? WHERE id = ?",
             (json.dumps(record, ensure_ascii=False), record_id),
         )
+        _sync_fts(conn, record)
         conn.commit()
         logger.debug(f"[History] 更新记录: id={record_id}, fields={list(patch.keys())}")
         return True
@@ -208,6 +238,7 @@ def delete_history(record_id: str) -> bool:
             return False
         record = json.loads(row[0])
         conn.execute("DELETE FROM history WHERE id = ?", (record_id,))
+        conn.execute("DELETE FROM history_fts WHERE id = ?", (record_id,))
         conn.commit()
         logger.debug(f"[History] 删除记录: id={record_id}")
 
@@ -219,28 +250,47 @@ def delete_history(record_id: str) -> bool:
 def query_history(q: str = '', page: int = 1, per_page: int = 12) -> dict:
     """支持搜索 + 分页的历史记录查询。
     返回 { records: [...], total: N, page: N, pages: N }
-    搜索在 SQL 层完成（LIKE 匹配 JSON blob 中的文本字段）。"""
+    搜索采用混合策略：FTS5 全文索引优先，CJK 子串回退 LIKE 扫描。"""
     _migrate_from_json()
     try:
         conn = _get_conn()
         if q:
-            # SQL 层搜索：对 JSON blob 做 LIKE 匹配（覆盖 scene_description / edit_prompt / edit_summary / compliance_analysis）
-            pattern = f"%{q}%"
+            # 先尝试 FTS5 全文搜索（英文词/短语命中走索引）
+            fts_q = f'"{q}"'
             total = conn.execute(
-                "SELECT COUNT(*) FROM history WHERE data LIKE ? COLLATE NOCASE",
-                (pattern,),
+                "SELECT COUNT(*) FROM history_fts WHERE history_fts MATCH ?",
+                (fts_q,),
             ).fetchone()[0]
 
-            pages = max(1, (total + per_page - 1) // per_page)
-            page = max(1, min(page, pages))
-            offset = (page - 1) * per_page
-
-            rows = conn.execute(
-                "SELECT data FROM history WHERE data LIKE ? COLLATE NOCASE "
-                "ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (pattern, per_page, offset),
-            ).fetchall()
-            records = [json.loads(row[0]) for row in rows]
+            if total > 0:
+                # FTS 命中：通过 id JOIN 回 history 表取完整 JSON 数据
+                pages = max(1, (total + per_page - 1) // per_page)
+                page = max(1, min(page, pages))
+                offset = (page - 1) * per_page
+                rows = conn.execute(
+                    "SELECT h.data FROM history h "
+                    "INNER JOIN history_fts f ON h.id = f.id "
+                    "WHERE history_fts MATCH ? "
+                    "ORDER BY h.created_at DESC LIMIT ? OFFSET ?",
+                    (fts_q, per_page, offset),
+                ).fetchall()
+                records = [json.loads(row[0]) for row in rows]
+            else:
+                # FTS 未命中（CJK 子串等）：回退 LIKE 扫描
+                pattern = f"%{q}%"
+                total = conn.execute(
+                    "SELECT COUNT(*) FROM history WHERE data LIKE ? COLLATE NOCASE",
+                    (pattern,),
+                ).fetchone()[0]
+                pages = max(1, (total + per_page - 1) // per_page)
+                page = max(1, min(page, pages))
+                offset = (page - 1) * per_page
+                rows = conn.execute(
+                    "SELECT data FROM history WHERE data LIKE ? COLLATE NOCASE "
+                    "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                    (pattern, per_page, offset),
+                ).fetchall()
+                records = [json.loads(row[0]) for row in rows]
         else:
             # 无搜索：直接分页
             total = conn.execute("SELECT COUNT(*) FROM history").fetchone()[0]

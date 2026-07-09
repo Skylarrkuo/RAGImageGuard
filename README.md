@@ -26,7 +26,7 @@ RAG_PNG/
 │   ├── maxkb.py            # Step 2: MaxKB 合规分析（子问题提取 + 重试 + 并行查询）
 │   ├── prompt_gen.py       # Step 3: 改图提示词生成
 │   ├── image_edit.py       # Step 4: GPT-Image 图片编辑（自动比例检测）
-│   └── history.py          # 历史记录 SQLite 存储（WAL 模式 + 线程本地连接 + CRUD + SQL 搜索 + 懒迁移）
+│   └── history.py          # 历史记录 SQLite 存储（WAL + FTS5 全文索引 + 线程本地连接 + CRUD + 懒迁移）
 ├── routes/
 │   ├── __init__.py         # Blueprint 注册中心
 │   ├── pipeline.py         # 流水线路由（5 步流程、SSE 流式、补充编辑、结束流程）
