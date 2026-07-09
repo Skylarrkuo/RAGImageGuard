@@ -18,11 +18,12 @@ RAG_PNG/
 ├── config/
 │   └── settings.py         # 环境变量配置 + UPLOAD_DIR 共享常量
 ├── core/
+│   ├── executor.py         # 共享线程池（全局复用）
 │   ├── logging.py          # 全局日志配置
 │   └── utils.py            # 通用工具（格式检测、尺寸计算、缩略图生成）
 ├── services/
 │   ├── mimo.py             # Step 1: MiMo 视觉识别
-│   ├── maxkb.py            # Step 2: MaxKB 合规分析（子问题提取 + 并行查询）
+│   ├── maxkb.py            # Step 2: MaxKB 合规分析（子问题提取 + 重试 + 并行查询）
 │   ├── prompt_gen.py       # Step 3: 改图提示词生成
 │   ├── image_edit.py       # Step 4: GPT-Image 图片编辑（自动比例检测）
 │   └── history.py          # 历史记录 SQLite 存储（CRUD + SQL 搜索 + 懒迁移）
@@ -35,6 +36,9 @@ RAG_PNG/
 │   └── src/
 │       ├── api/index.js    # API 调用封装（统一拦截器 + completeFlow）
 │       ├── App.vue         # 主应用（上传 / 工作台 / 历史 三页切换）
+│       ├── composables/
+│       │   ├── useMarkdown.js       # Markdown 渲染
+│       │   └── useCompareSlider.js  # 图片对比滑块拖拽逻辑
 │       └── components/
 │           ├── UploadPage.vue      # 上传页面
 │           ├── Workspace.vue       # 工作台（5 步流程控制）

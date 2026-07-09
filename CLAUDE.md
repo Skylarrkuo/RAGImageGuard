@@ -38,6 +38,7 @@ RAG_PNG/
 ├── config/
 │   └── settings.py         # 环境变量配置加载 + UPLOAD_DIR 共享常量 + reload() 方法
 ├── core/
+│   ├── executor.py         # 共享线程池（ThreadPoolExecutor，全局复用）
 │   ├── logging.py          # 全局日志配置 + logger 导出
 │   └── utils.py            # 通用工具（格式检测、MIME 映射、尺寸计算、缩略图生成）
 ├── services/
@@ -55,6 +56,9 @@ RAG_PNG/
 │   └── src/
 │       ├── api/index.js    # API 调用封装（含 refineImage、completeFlow）
 │       ├── App.vue         # 主应用（上传 / 工作台 / 历史 三页切换）
+│       ├── composables/
+│       │   ├── useMarkdown.js       # Markdown 渲染（marked 封装）
+│       │   └── useCompareSlider.js  # 图片对比滑块拖拽逻辑
 │       └── components/
 │           ├── UploadPage.vue      # 上传页面
 │           ├── Workspace.vue       # 工作台（5 步流程控制）
@@ -149,9 +153,10 @@ pytest tests/ -v
 - **分层结构**：`core/`（基础设施）→ `services/`（业务逻辑）→ `routes/`（HTTP 端点）→ `app.py`（入口）
 - **应用工厂**：`create_app()` 函数便于测试和扩展
 - **Blueprint 模块化**：`pipeline_bp`、`history_bp`、`system_bp` 分别注册
-- 使用模块级 `ThreadPoolExecutor(max_workers=4)` 处理并发请求（定义在 `routes/pipeline.py`，全局复用，含 SSE 并行查询）
+- 使用模块级 `ThreadPoolExecutor(max_workers=4)` 处理并发请求（定义在 `core/executor.py`，被 `routes/pipeline.py` 和 `services/maxkb.py` 共同复用）
 - MaxKB 合规分析采用 **4 路并行查询**：先用 MiMo 提取 4-5 个子问题（覆盖标识、安全、无障碍、消防、卫生等维度），再并行查询知识库
 - 子问题提取采用 **双 prompt 策略**：详细版 → 精简版 → 兜底问题，`_call_mimo()` 带 3 次重试
+- **MaxKB 查询带重试**：`_query_maxkb_single()` 默认 3 次重试 + 指数退避，网络抖动时自动恢复
 - SSE 流式端点 (`/api/full-pipeline-stream`) 支持实时推送每个步骤进度，`done` 事件携带 `history_id`
 - **SSE 合规分析按完成顺序推送**：使用 `concurrent.futures.as_completed()` 而非提交顺序，先完成的子问题先推送到前端
 - 图片格式自动检测：支持 jpg/png/webp/gif
@@ -176,6 +181,7 @@ pytest tests/ -v
 - 步骤重试：每个步骤失败后可单独重试，无需重新开始（含 Step 5）
 - Markdown 渲染：合规分析结果使用 `marked` 库渲染
 - **历史记录**：列表页加载缩略图（`thumbUrl()` 函数），详情页显示原图/生成图对比滑块，支持精修图对比和 Step 5 信息展示
+- **Composables 抽取**：`useMarkdown.js` 统一 Markdown 渲染，`useCompareSlider.js` 统一图片对比滑块拖拽逻辑，被 ContentPanel 和 HistoryPage 共用
 - **补充编辑**：ContentPanel 中 Step 5 输入区域（缩略图预览 + 文本框 + 按钮），提供「开始修正」和「结束」两个操作
 - **图片预览**：Step 4/5 生成图片默认显示缩略图（240px），点击打开全屏 Lightbox 进行修改前后对比（拖拽滑块），支持 Escape 关闭
 - **历史搜索 + 分页**：HistoryPage 支持关键词搜索（debounce 300ms）和分页切换，`getHistory(q, page, perPage)` 传参
@@ -196,7 +202,7 @@ pytest tests/ -v
 10. **API 认证**：配置 `API_KEY` 后，所有 `/api/*` 请求需携带 `X-API-Key` 头（`/api/config-check` 和 `/images/*` 自动放行）；留空则不启用认证
 11. **线程安全**：`services/image_edit.py` 中代理环境变量的清除/恢复通过全局 `_env_lock` 保护，避免并发请求互相污染
 12. **全局异常处理**：`app.py` 注册 `errorhandler` 覆盖 413/404/500/Exception，所有错误返回 JSON 格式
-13. **线程池复用**：模块级 `executor` 被单步端点和 SSE 流式端点共用，避免反复创建销毁
+13. **线程池复用**：`core/executor.py` 中的模块级 `executor` 被 `routes/pipeline.py`（单步端点 + SSE 流式）和 `services/maxkb.py`（并行查询）共同复用，避免反复创建销毁
 14. **前端错误处理**：`api/index.js` 的 `request()` 拦截器统一检查 HTTP 状态码，非 2xx 自动抛出带服务端错误信息的异常
 15. **共享常量**：`UPLOAD_DIR` 定义在 `config/settings.py`，被 `routes/pipeline.py` 和 `routes/system.py` 共同导入，避免重复定义
 16. **配置热加载**：`settings.reload()` 方法可从环境变量重新读取配置，测试中 `monkeypatch.setenv()` 后调用即可刷新
