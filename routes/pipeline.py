@@ -419,7 +419,7 @@ def api_full_pipeline_stream():
         sub_queries = None
         for item in _run_with_heartbeat(extract_sub_queries, scene_desc):
             if isinstance(item, str):
-                yield item
+                continue  # 心跳字符串，跳过（generate() 自行管理心跳）
             else:
                 sub_queries = item
         queries = [f"以下是景区场景描述：\n{scene_desc}\n\n请根据以上场景和旅游景区相关国家标准回答：{sq}" for sq in sub_queries]
