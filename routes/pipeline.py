@@ -23,23 +23,13 @@ from core.executor import executor
 
 pipeline_bp = Blueprint("pipeline", __name__)
 
-# 各步骤超时（秒），留 10s 余量
-_TIMEOUT_RECOGNIZE = 130    # MiMo 识别 120s
-_TIMEOUT_COMPLIANCE = 310   # MaxKB 查询 300s
-_TIMEOUT_PROMPT = 130       # 提示词生成 120s
-_TIMEOUT_IMAGE_EDIT = 310   # GPT-image 编辑 300s
-
 # 确保图片子目录存在
 IMAGE_SUBDIRS = ("original", "generated", "refined", "thumb")
 for _sub in IMAGE_SUBDIRS:
     (UPLOAD_DIR / _sub).mkdir(parents=True, exist_ok=True)
 
 
-# 心跳间隔（秒）— 低于反向代理常见 60s 超时
-_HEARTBEAT_INTERVAL = 30
-
-
-def _run_with_heartbeat(fn, *args, interval=_HEARTBEAT_INTERVAL):
+def _run_with_heartbeat(fn, *args, interval=settings.TIMEOUT_HEARTBEAT):
     """在后台线程执行 fn，主线程每隔 interval 秒 yield 心跳注释。
 
     返回生成器，依次产出心跳字符串和最终结果。
@@ -115,7 +105,7 @@ def api_recognize():
     t0 = time.time()
     future = executor.submit(recognize_with_mimo, image_bytes, image_format)
     try:
-        result = future.result(timeout=_TIMEOUT_RECOGNIZE)
+        result = future.result(timeout=settings.TIMEOUT_RECOGNIZE)
     except FuturesTimeoutError:
         logger.error("[API] /api/recognize 超时")
         return jsonify({"success": False, "error": "识别超时，请重试"}), 504
@@ -139,7 +129,7 @@ def api_analyze_compliance():
     t0 = time.time()
     future = executor.submit(analyze_compliance_with_maxkb, scene_description, user_role)
     try:
-        result = future.result(timeout=_TIMEOUT_COMPLIANCE)
+        result = future.result(timeout=settings.TIMEOUT_COMPLIANCE)
     except FuturesTimeoutError:
         logger.error("[API] /api/analyze-compliance 超时")
         return jsonify({"success": False, "error": "合规分析超时，请重试"}), 504
@@ -163,7 +153,7 @@ def api_generate_prompt():
     t0 = time.time()
     future = executor.submit(generate_edit_prompt, scene_description, compliance_analysis)
     try:
-        result = future.result(timeout=_TIMEOUT_PROMPT)
+        result = future.result(timeout=settings.TIMEOUT_PROMPT)
     except FuturesTimeoutError:
         logger.error("[API] /api/generate-prompt 超时")
         return jsonify({"success": False, "error": "提示词生成超时，请重试"}), 504
@@ -193,7 +183,7 @@ def api_generate_image():
     logger.info(f"[API] 图片: {image.filename} ({len(image_bytes)} bytes, {image_format}) | 提示词: {prompt[:100]}...")
     future = executor.submit(generate_edited_image, image_bytes, image_format, prompt)
     try:
-        result = future.result(timeout=_TIMEOUT_IMAGE_EDIT)
+        result = future.result(timeout=settings.TIMEOUT_IMAGE_EDIT)
     except FuturesTimeoutError:
         logger.error("[API] /api/generate-image 超时")
         return jsonify({"success": False, "error": "图片编辑超时，请重试"}), 504
@@ -248,7 +238,7 @@ def api_refine_image():
     t5 = time.time()
     future = executor.submit(generate_edited_image, image_bytes, image_format, prompt)
     try:
-        result = future.result(timeout=_TIMEOUT_IMAGE_EDIT)
+        result = future.result(timeout=settings.TIMEOUT_IMAGE_EDIT)
     except FuturesTimeoutError:
         logger.error("[API] /api/refine-image 超时")
         return jsonify({"success": False, "error": "图片编辑超时，请重试"}), 504
@@ -447,7 +437,7 @@ def api_full_pipeline_stream():
         futures = {executor.submit(_fetch_one, i, q): i for i, q in enumerate(queries)}
         for f in as_completed(futures):
             try:
-                idx, answer, sources = f.result(timeout=_TIMEOUT_COMPLIANCE)
+                idx, answer, sources = f.result(timeout=settings.TIMEOUT_COMPLIANCE)
             except FuturesTimeoutError:
                 logger.error(f"[SSE-Compliance] 查询超时")
                 continue

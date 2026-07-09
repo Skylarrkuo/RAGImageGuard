@@ -125,6 +125,13 @@ MAXKB_SCENE_OPTIMIZE_API_KEY=xxx
 OPENAI_API_KEY=xxx
 OPENAI_API_BASE=https://xxx
 OPENAI_MODEL_NAME=gpt-image-2   # 图片编辑模型（默认 gpt-image-2）
+
+# ---- 超时配置（秒，可选） ----
+TIMEOUT_RECOGNIZE=130           # MiMo 识别（默认 130，含 10s 余量）
+TIMEOUT_COMPLIANCE=310          # MaxKB 查询（默认 310）
+TIMEOUT_PROMPT=130              # 提示词生成（默认 130）
+TIMEOUT_IMAGE_EDIT=310          # GPT-image 编辑（默认 310）
+TIMEOUT_HEARTBEAT=30            # SSE 心跳间隔（默认 30）
 ```
 
 ## 快速启动
@@ -190,7 +197,7 @@ pytest tests/ -v
 
 ## 开发注意事项
 
-1. **API 调用超时**：MiMo 识别 120s，MaxKB 查询 300s，GPT-image 编辑 300s；`future.result()` 带 timeout 参数，超时返回 504
+1. **API 调用超时**：通过 `config/settings.py` 统一配置，支持环境变量 `TIMEOUT_RECOGNIZE`/`TIMEOUT_COMPLIANCE`/`TIMEOUT_PROMPT`/`TIMEOUT_IMAGE_EDIT`/`TIMEOUT_HEARTBEAT` 覆盖，默认值含 10s 余量；`future.result()` 带 timeout 参数，超时返回 504
 2. **代理设置**：OpenAI 客户端显式禁用代理 (`proxy=None`)，环境变量操作通过 `threading.Lock` 保证线程安全
 3. **并发控制**：MaxKB 并行查询限制为 4 路
 4. **文件命名**：上传图片 `original/{uuid}.{ext}`，生成图片 `generated/{uuid}.png`，精修图片 `refined/{uuid}.png`，缩略图 `thumb/thumb_{uuid}.jpg`

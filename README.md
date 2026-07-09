@@ -99,6 +99,16 @@ cp .env.example .env
 | `MAX_UPLOAD_MB` | `20` | 上传文件大小限制（MB） |
 | `OPENAI_MODEL_NAME` | `gpt-image-2` | 图片编辑使用的模型 |
 
+**超时配置**（可选，单位秒，留空使用默认值）：
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `TIMEOUT_RECOGNIZE` | `130` | MiMo 识别超时 |
+| `TIMEOUT_COMPLIANCE` | `310` | MaxKB 合规分析超时 |
+| `TIMEOUT_PROMPT` | `130` | 提示词生成超时 |
+| `TIMEOUT_IMAGE_EDIT` | `310` | GPT-image 编辑超时 |
+| `TIMEOUT_HEARTBEAT` | `30` | SSE 心跳间隔 |
+
 ### 启动后端
 
 ```bash

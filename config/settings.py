@@ -34,6 +34,13 @@ class _Settings:
     MAX_UPLOAD_MB: int = int(os.getenv("MAX_UPLOAD_MB", "20"))
     API_KEY: str = os.getenv("API_KEY", "")
 
+    # 超时配置（秒），留 10s 余量
+    TIMEOUT_RECOGNIZE: int = int(os.getenv("TIMEOUT_RECOGNIZE", "130"))      # MiMo 识别 120s
+    TIMEOUT_COMPLIANCE: int = int(os.getenv("TIMEOUT_COMPLIANCE", "310"))    # MaxKB 查询 300s
+    TIMEOUT_PROMPT: int = int(os.getenv("TIMEOUT_PROMPT", "130"))            # 提示词生成 120s
+    TIMEOUT_IMAGE_EDIT: int = int(os.getenv("TIMEOUT_IMAGE_EDIT", "310"))    # GPT-image 编辑 300s
+    TIMEOUT_HEARTBEAT: int = int(os.getenv("TIMEOUT_HEARTBEAT", "30"))       # SSE 心跳间隔
+
     def reload(self):
         """重新从环境变量读取所有配置值（方便测试中 monkeypatch.setenv 后刷新）"""
         self.MIMO_API_KEY = os.getenv("MIMO_API_KEY", "")
@@ -46,6 +53,11 @@ class _Settings:
         self.ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:8001")
         self.MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "20"))
         self.API_KEY = os.getenv("API_KEY", "")
+        self.TIMEOUT_RECOGNIZE = int(os.getenv("TIMEOUT_RECOGNIZE", "130"))
+        self.TIMEOUT_COMPLIANCE = int(os.getenv("TIMEOUT_COMPLIANCE", "310"))
+        self.TIMEOUT_PROMPT = int(os.getenv("TIMEOUT_PROMPT", "130"))
+        self.TIMEOUT_IMAGE_EDIT = int(os.getenv("TIMEOUT_IMAGE_EDIT", "310"))
+        self.TIMEOUT_HEARTBEAT = int(os.getenv("TIMEOUT_HEARTBEAT", "30"))
 
 
 settings = _Settings()
