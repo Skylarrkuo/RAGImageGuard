@@ -314,7 +314,8 @@
 
 <script setup>
 import { ref, watch, nextTick, computed } from 'vue'
-import { marked } from 'marked'
+import { renderMarkdown } from '../composables/useMarkdown.js'
+import { useCompareSlider } from '../composables/useCompareSlider.js'
 
 const props = defineProps({
   title: { type: String, default: '等待开始' },
@@ -334,22 +335,16 @@ defineEmits(['toggle-compliance', 'run-step5', 'finish-flow'])
 const refinePrompt = ref('')
 
 const bodyRef = ref(null)
-const compareRef = ref(null)
 
 // Scan animation state
 const scanPhase = ref(true)
 const scanDone = ref(false)
 
-// Compare slider state (kept for potential future use)
-const sliderPos = ref(50)
-const isDragging = ref(false)
-
 // Lightbox state
 const lightboxOpen = ref(false)
 const lightboxImages = ref(null)
-const lightboxSliderPos = ref(50)
-const lightboxDragging = ref(false)
 const lightboxCompareRef = ref(null)
+const { sliderPos: lightboxSliderPos, startDrag: startLightboxDrag } = useCompareSlider(lightboxCompareRef)
 
 const hasContent = computed(() => {
   return props.content && !props.content.includes('content-empty')
@@ -358,10 +353,6 @@ const hasContent = computed(() => {
 const hasCompliance = computed(() => {
   return props.complianceQueries && props.complianceQueries.length > 0
 })
-
-function renderMarkdown(text) {
-  return marked.parse(text || '')
-}
 
 // When step4Images or step5Images arrives, start scan animation
 watch(() => [props.step4Images, props.step5Images], ([v4, v5]) => {
@@ -379,38 +370,6 @@ function onImageLoad() {
   setTimeout(() => {
     scanPhase.value = false
   }, 1800)
-}
-
-// ── Compare slider drag ──
-function startDrag(e) {
-  isDragging.value = true
-  updateSlider(e)
-  window.addEventListener('mousemove', onDrag)
-  window.addEventListener('touchmove', onDrag, { passive: false })
-  window.addEventListener('mouseup', stopDrag)
-  window.addEventListener('touchend', stopDrag)
-}
-
-function onDrag(e) {
-  if (!isDragging.value) return
-  e.preventDefault()
-  updateSlider(e)
-}
-
-function stopDrag() {
-  isDragging.value = false
-  window.removeEventListener('mousemove', onDrag)
-  window.removeEventListener('touchmove', onDrag)
-  window.removeEventListener('mouseup', stopDrag)
-  window.removeEventListener('touchend', stopDrag)
-}
-
-function updateSlider(e) {
-  if (!compareRef.value) return
-  const rect = compareRef.value.getBoundingClientRect()
-  const touch = e.touches ? e.touches[0] : e
-  const x = touch.clientX - rect.left
-  sliderPos.value = Math.max(0, Math.min(100, (x / rect.width) * 100))
 }
 
 // ── Lightbox ──
@@ -441,37 +400,6 @@ watch(lightboxOpen, (open) => {
     window.removeEventListener('keydown', onLightboxKeydown)
   }
 })
-
-function startLightboxDrag(e) {
-  lightboxDragging.value = true
-  updateLightboxSlider(e)
-  window.addEventListener('mousemove', onLightboxDrag)
-  window.addEventListener('touchmove', onLightboxDrag, { passive: false })
-  window.addEventListener('mouseup', stopLightboxDrag)
-  window.addEventListener('touchend', stopLightboxDrag)
-}
-
-function onLightboxDrag(e) {
-  if (!lightboxDragging.value) return
-  e.preventDefault()
-  updateLightboxSlider(e)
-}
-
-function stopLightboxDrag() {
-  lightboxDragging.value = false
-  window.removeEventListener('mousemove', onLightboxDrag)
-  window.removeEventListener('touchmove', onLightboxDrag)
-  window.removeEventListener('mouseup', stopLightboxDrag)
-  window.removeEventListener('touchend', stopLightboxDrag)
-}
-
-function updateLightboxSlider(e) {
-  if (!lightboxCompareRef.value) return
-  const rect = lightboxCompareRef.value.getBoundingClientRect()
-  const touch = e.touches ? e.touches[0] : e
-  const x = touch.clientX - rect.left
-  lightboxSliderPos.value = Math.max(0, Math.min(100, (x / rect.width) * 100))
-}
 
 // ── Download image ──
 function downloadImage(url, step) {

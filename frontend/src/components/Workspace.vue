@@ -84,8 +84,8 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { marked } from 'marked'
 import { recognize, analyzeCompliance, generatePrompt, generateImage, refineImage, completeFlow, fullPipelineStream, consumeSSEStream } from '../api/index.js'
+import { renderMarkdown as renderMd } from '../composables/useMarkdown.js'
 import PipelineSidebar from './PipelineSidebar.vue'
 import ContentPanel from './ContentPanel.vue'
 import SummaryBar from './SummaryBar.vue'
@@ -222,7 +222,7 @@ function setNodeState(stepId, state, timeMs) {
 }
 
 function renderMarkdown(text) {
-  return `<div class="md-content">${marked.parse(text)}</div>`
+  return `<div class="md-content">${renderMd(text)}</div>`
 }
 
 function setStepContent(stepId, html) {

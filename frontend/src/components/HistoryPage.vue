@@ -30,20 +30,20 @@
           <div class="loading-dots"><span></span><span></span><span></span></div>
         </div>
 
-        <div v-else-if="records.length === 0" class="history-empty">
-          <div class="history-empty-icon">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          </div>
-          <div class="history-empty-text">暂无分析记录</div>
-          <div class="history-empty-hint">上传图片开始第一次分析</div>
-        </div>
-
         <div v-else-if="records.length === 0 && searchQuery" class="history-empty">
           <div class="history-empty-icon">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           </div>
           <div class="history-empty-text">未找到匹配记录</div>
           <div class="history-empty-hint">尝试其他关键词</div>
+        </div>
+
+        <div v-else-if="records.length === 0" class="history-empty">
+          <div class="history-empty-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          </div>
+          <div class="history-empty-text">暂无分析记录</div>
+          <div class="history-empty-hint">上传图片开始第一次分析</div>
         </div>
 
         <div v-else class="history-grid">
@@ -267,8 +267,9 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { marked } from 'marked'
 import { getHistory, getHistoryDetail, deleteHistory } from '../api/index.js'
+import { renderMarkdown } from '../composables/useMarkdown.js'
+import { useCompareSlider } from '../composables/useCompareSlider.js'
 import AppModal from './AppModal.vue'
 
 defineEmits(['back'])
@@ -289,10 +290,9 @@ let searchTimer = null
 const showDeleteModal = ref(false)
 const pendingDeleteId = ref(null)
 
-// Compare slider state
+// Compare slider
 const compareRef = ref(null)
-const sliderPos = ref(50)
-const isDragging = ref(false)
+const { sliderPos, startDrag } = useCompareSlider(compareRef)
 
 onMounted(async () => {
   await fetchHistory()
@@ -382,42 +382,6 @@ function thumbUrl(filepath) {
   // original/abc123.jpg → /images/thumb/thumb_abc123.jpg
   const base = filepath.replace(/^.*\//, '').replace(/\.[^.]+$/, '')
   return '/images/thumb/thumb_' + base + '.jpg'
-}
-
-function renderMarkdown(text) {
-  return marked.parse(text || '')
-}
-
-// ── Compare slider drag ──
-function startDrag(e) {
-  isDragging.value = true
-  updateSlider(e)
-  window.addEventListener('mousemove', onDrag)
-  window.addEventListener('touchmove', onDrag, { passive: false })
-  window.addEventListener('mouseup', stopDrag)
-  window.addEventListener('touchend', stopDrag)
-}
-
-function onDrag(e) {
-  if (!isDragging.value) return
-  e.preventDefault()
-  updateSlider(e)
-}
-
-function stopDrag() {
-  isDragging.value = false
-  window.removeEventListener('mousemove', onDrag)
-  window.removeEventListener('touchmove', onDrag)
-  window.removeEventListener('mouseup', stopDrag)
-  window.removeEventListener('touchend', stopDrag)
-}
-
-function updateSlider(e) {
-  if (!compareRef.value) return
-  const rect = compareRef.value.getBoundingClientRect()
-  const touch = e.touches ? e.touches[0] : e
-  const x = touch.clientX - rect.left
-  sliderPos.value = Math.max(0, Math.min(100, (x / rect.width) * 100))
 }
 
 // ── Download image ──
