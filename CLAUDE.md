@@ -171,7 +171,7 @@ pytest tests/ -v
 - **缩略图自动生成**：`_save_with_thumbnail()` 保存原图时同步生成长边 400px 的 JPEG 缩略图
 - **图片比例自适应**：`pick_gpt_image_size()` 根据原图宽高比选择 GPT-image-2 最接近的尺寸
 - **大图自动缩放**：`resize_for_api()` 在发送到 MiMo/GPT-Image 前自动缩放长边超过 2048px 的图片，输出 JPEG quality=85，减少传输体积
-- 历史记录存储在 `data/history.db`（SQLite），支持 `save_history()`、`update_history()`、`delete_history()`、`get_history_by_id()`、`query_history()` 五种操作，首次数据库操作时自动从 `history.json` 迁移（懒执行，非模块导入时）
+- 历史记录存储在 `data/history.db`（SQLite，WAL 模式），支持 `save_history()`、`update_history()`、`delete_history()`、`get_history_by_id()`、`query_history()` 五种操作，首次数据库操作时自动从 `history.json` 迁移（懒执行，非模块导入时）；使用 `threading.local()` 缓存线程本地连接避免反复创建销毁，写操作用 `_db_lock` 串行化，读操作无锁（WAL 并发读）
 - **历史详情 O(1) 查询**：`get_history_by_id(record_id)` 直接 SQL `WHERE id = ?` 索引查询，无需加载全量数据
 - **历史搜索 SQL 层**：`query_history(q, page, per_page)` 使用 SQL `LIKE` 匹配 + `LIMIT/OFFSET` 分页，不在 Python 内存中过滤
 - **流程结束**：`/api/complete-flow` 端点处理用户跳过 Step 5 的场景，标记 `status: "completed"` + `step5_skipped: true`

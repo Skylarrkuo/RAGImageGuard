@@ -11,8 +11,11 @@ from config.settings import UPLOAD_DIR
 # 数据库路径
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "history.db"
 
-# 线程安全锁（sqlite3 连接非线程安全）
+# 写操作互斥锁（SQLite 单写者限制）
 _db_lock = threading.Lock()
+
+# 线程本地连接缓存
+_local = threading.local()
 
 MAX_RECORDS = 100
 
@@ -21,9 +24,20 @@ _migration_done = False
 
 
 def _get_conn() -> sqlite3.Connection:
-    """获取数据库连接（每次调用新建，用完关闭）"""
+    """获取当前线程的数据库连接（懒创建 + 复用，DB_PATH 变化时自动重建）"""
+    conn = getattr(_local, "conn", None)
+    cached_path = getattr(_local, "db_path", None)
+    if conn is not None and cached_path == DB_PATH:
+        return conn
+    # 新连接或 DB_PATH 已变更（测试 monkeypatch）
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute(
         "CREATE TABLE IF NOT EXISTS history ("
         "  id TEXT PRIMARY KEY,"
@@ -33,6 +47,8 @@ def _get_conn() -> sqlite3.Connection:
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON history(created_at DESC)")
     conn.commit()
+    _local.conn = conn
+    _local.db_path = DB_PATH
     return conn
 
 
@@ -55,55 +71,44 @@ def _migrate_from_json():
 
     with _db_lock:
         conn = _get_conn()
-        try:
-            count = conn.execute("SELECT COUNT(*) FROM history").fetchone()[0]
-            if count > 0:
-                return  # DB 已有数据，跳过迁移
-            for record in records:
-                rid = record.get("id", "")
-                created = record.get("created_at", "")
-                conn.execute(
-                    "INSERT OR IGNORE INTO history (id, created_at, data) VALUES (?, ?, ?)",
-                    (rid, created, json.dumps(record, ensure_ascii=False)),
-                )
-            conn.commit()
-            logger.info(f"[History] 从 history.json 迁移了 {len(records)} 条记录到 SQLite")
-        finally:
-            conn.close()
+        count = conn.execute("SELECT COUNT(*) FROM history").fetchone()[0]
+        if count > 0:
+            return  # DB 已有数据，跳过迁移
+        for record in records:
+            rid = record.get("id", "")
+            created = record.get("created_at", "")
+            conn.execute(
+                "INSERT OR IGNORE INTO history (id, created_at, data) VALUES (?, ?, ?)",
+                (rid, created, json.dumps(record, ensure_ascii=False)),
+            )
+        conn.commit()
+        logger.info(f"[History] 从 history.json 迁移了 {len(records)} 条记录到 SQLite")
 
 
 def load_history() -> list:
     """读取所有历史记录（最新在前）"""
     _migrate_from_json()
-    with _db_lock:
-        conn = _get_conn()
-        try:
-            rows = conn.execute(
-                "SELECT data FROM history ORDER BY created_at DESC"
-            ).fetchall()
-            return [json.loads(row[0]) for row in rows]
-        except Exception as e:
-            logger.warning(f"[History] 读取失败: {e}")
-            return []
-        finally:
-            conn.close()
+    try:
+        rows = _get_conn().execute(
+            "SELECT data FROM history ORDER BY created_at DESC"
+        ).fetchall()
+        return [json.loads(row[0]) for row in rows]
+    except Exception as e:
+        logger.warning(f"[History] 读取失败: {e}")
+        return []
 
 
 def get_history_by_id(record_id: str) -> dict | None:
     """按 id 直接查询单条历史记录（O(1) 索引查询）"""
     _migrate_from_json()
-    with _db_lock:
-        conn = _get_conn()
-        try:
-            row = conn.execute(
-                "SELECT data FROM history WHERE id = ?", (record_id,)
-            ).fetchone()
-            return json.loads(row[0]) if row else None
-        except Exception as e:
-            logger.warning(f"[History] 查询失败: {e}")
-            return None
-        finally:
-            conn.close()
+    try:
+        row = _get_conn().execute(
+            "SELECT data FROM history WHERE id = ?", (record_id,)
+        ).fetchone()
+        return json.loads(row[0]) if row else None
+    except Exception as e:
+        logger.warning(f"[History] 查询失败: {e}")
+        return None
 
 
 def save_history(record: dict):
@@ -116,30 +121,27 @@ def save_history(record: dict):
     stale_records = []
     with _db_lock:
         conn = _get_conn()
-        try:
+        conn.execute(
+            "INSERT OR REPLACE INTO history (id, created_at, data) VALUES (?, ?, ?)",
+            (rid, created, json.dumps(record, ensure_ascii=False)),
+        )
+        # 超过上限时删除最旧的
+        count = conn.execute("SELECT COUNT(*) FROM history").fetchone()[0]
+        if count > MAX_RECORDS:
+            excess = count - MAX_RECORDS
+            # 先查出待删除记录的图片路径
+            rows = conn.execute(
+                "SELECT data FROM history ORDER BY created_at ASC LIMIT ?",
+                (excess,),
+            ).fetchall()
+            stale_records = [json.loads(r[0]) for r in rows]
             conn.execute(
-                "INSERT OR REPLACE INTO history (id, created_at, data) VALUES (?, ?, ?)",
-                (rid, created, json.dumps(record, ensure_ascii=False)),
+                "DELETE FROM history WHERE id IN "
+                "(SELECT id FROM history ORDER BY created_at ASC LIMIT ?)",
+                (excess,),
             )
-            # 超过上限时删除最旧的
-            count = conn.execute("SELECT COUNT(*) FROM history").fetchone()[0]
-            if count > MAX_RECORDS:
-                excess = count - MAX_RECORDS
-                # 先查出待删除记录的图片路径
-                rows = conn.execute(
-                    "SELECT data FROM history ORDER BY created_at ASC LIMIT ?",
-                    (excess,),
-                ).fetchall()
-                stale_records = [json.loads(r[0]) for r in rows]
-                conn.execute(
-                    "DELETE FROM history WHERE id IN "
-                    "(SELECT id FROM history ORDER BY created_at ASC LIMIT ?)",
-                    (excess,),
-                )
-            conn.commit()
-            logger.debug(f"[History] 保存成功")
-        finally:
-            conn.close()
+        conn.commit()
+        logger.debug(f"[History] 保存成功")
 
     # 清理被淘汰记录的图片文件（锁外执行）
     for sr in stale_records:
@@ -150,24 +152,21 @@ def update_history(record_id: str, patch: dict) -> bool:
     """按 id 更新历史记录中的字段"""
     with _db_lock:
         conn = _get_conn()
-        try:
-            row = conn.execute(
-                "SELECT data FROM history WHERE id = ?", (record_id,)
-            ).fetchone()
-            if not row:
-                logger.warning(f"[History] 未找到记录: id={record_id}")
-                return False
-            record = json.loads(row[0])
-            record.update(patch)
-            conn.execute(
-                "UPDATE history SET data = ? WHERE id = ?",
-                (json.dumps(record, ensure_ascii=False), record_id),
-            )
-            conn.commit()
-            logger.debug(f"[History] 更新记录: id={record_id}, fields={list(patch.keys())}")
-            return True
-        finally:
-            conn.close()
+        row = conn.execute(
+            "SELECT data FROM history WHERE id = ?", (record_id,)
+        ).fetchone()
+        if not row:
+            logger.warning(f"[History] 未找到记录: id={record_id}")
+            return False
+        record = json.loads(row[0])
+        record.update(patch)
+        conn.execute(
+            "UPDATE history SET data = ? WHERE id = ?",
+            (json.dumps(record, ensure_ascii=False), record_id),
+        )
+        conn.commit()
+        logger.debug(f"[History] 更新记录: id={record_id}, fields={list(patch.keys())}")
+        return True
 
 
 def _cleanup_image_files(record: dict):
@@ -200,20 +199,17 @@ def delete_history(record_id: str) -> bool:
     """删除一条历史记录及其关联图片文件"""
     with _db_lock:
         conn = _get_conn()
-        try:
-            # 先查询记录以获取图片路径
-            row = conn.execute(
-                "SELECT data FROM history WHERE id = ?", (record_id,)
-            ).fetchone()
-            if not row:
-                logger.warning(f"[History] 未找到记录: id={record_id}")
-                return False
-            record = json.loads(row[0])
-            cursor = conn.execute("DELETE FROM history WHERE id = ?", (record_id,))
-            conn.commit()
-            logger.debug(f"[History] 删除记录: id={record_id}")
-        finally:
-            conn.close()
+        # 先查询记录以获取图片路径
+        row = conn.execute(
+            "SELECT data FROM history WHERE id = ?", (record_id,)
+        ).fetchone()
+        if not row:
+            logger.warning(f"[History] 未找到记录: id={record_id}")
+            return False
+        record = json.loads(row[0])
+        conn.execute("DELETE FROM history WHERE id = ?", (record_id,))
+        conn.commit()
+        logger.debug(f"[History] 删除记录: id={record_id}")
 
     # 在锁外清理文件（避免持锁做 IO）
     _cleanup_image_files(record)
@@ -225,44 +221,40 @@ def query_history(q: str = '', page: int = 1, per_page: int = 12) -> dict:
     返回 { records: [...], total: N, page: N, pages: N }
     搜索在 SQL 层完成（LIKE 匹配 JSON blob 中的文本字段）。"""
     _migrate_from_json()
-    with _db_lock:
+    try:
         conn = _get_conn()
-        try:
-            if q:
-                # SQL 层搜索：对 JSON blob 做 LIKE 匹配（覆盖 scene_description / edit_prompt / edit_summary / compliance_analysis）
-                pattern = f"%{q}%"
-                count_row = conn.execute(
-                    "SELECT COUNT(*) FROM history WHERE data LIKE ? COLLATE NOCASE",
-                    (pattern,),
-                ).fetchone()
-                total = count_row[0]
+        if q:
+            # SQL 层搜索：对 JSON blob 做 LIKE 匹配（覆盖 scene_description / edit_prompt / edit_summary / compliance_analysis）
+            pattern = f"%{q}%"
+            total = conn.execute(
+                "SELECT COUNT(*) FROM history WHERE data LIKE ? COLLATE NOCASE",
+                (pattern,),
+            ).fetchone()[0]
 
-                pages = max(1, (total + per_page - 1) // per_page)
-                page = max(1, min(page, pages))
-                offset = (page - 1) * per_page
+            pages = max(1, (total + per_page - 1) // per_page)
+            page = max(1, min(page, pages))
+            offset = (page - 1) * per_page
 
-                rows = conn.execute(
-                    "SELECT data FROM history WHERE data LIKE ? COLLATE NOCASE "
-                    "ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                    (pattern, per_page, offset),
-                ).fetchall()
-                records = [json.loads(row[0]) for row in rows]
-            else:
-                # 无搜索：直接分页
-                total = conn.execute("SELECT COUNT(*) FROM history").fetchone()[0]
-                pages = max(1, (total + per_page - 1) // per_page)
-                page = max(1, min(page, pages))
-                offset = (page - 1) * per_page
+            rows = conn.execute(
+                "SELECT data FROM history WHERE data LIKE ? COLLATE NOCASE "
+                "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (pattern, per_page, offset),
+            ).fetchall()
+            records = [json.loads(row[0]) for row in rows]
+        else:
+            # 无搜索：直接分页
+            total = conn.execute("SELECT COUNT(*) FROM history").fetchone()[0]
+            pages = max(1, (total + per_page - 1) // per_page)
+            page = max(1, min(page, pages))
+            offset = (page - 1) * per_page
 
-                rows = conn.execute(
-                    "SELECT data FROM history ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                    (per_page, offset),
-                ).fetchall()
-                records = [json.loads(row[0]) for row in rows]
-        except Exception as e:
-            logger.warning(f"[History] 查询失败: {e}")
-            records, total, page, pages = [], 0, 1, 1
-        finally:
-            conn.close()
+            rows = conn.execute(
+                "SELECT data FROM history ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (per_page, offset),
+            ).fetchall()
+            records = [json.loads(row[0]) for row in rows]
+    except Exception as e:
+        logger.warning(f"[History] 查询失败: {e}")
+        records, total, page, pages = [], 0, 1, 1
 
     return {'records': records, 'total': total, 'page': page, 'pages': pages}
