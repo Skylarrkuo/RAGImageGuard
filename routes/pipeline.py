@@ -3,7 +3,8 @@
 import json
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
+import threading
+from concurrent.futures import as_completed, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -18,11 +19,9 @@ from services.image_edit import generate_edited_image
 from services.history import save_history, update_history
 
 from config.settings import settings, UPLOAD_DIR
+from core.executor import executor
 
 pipeline_bp = Blueprint("pipeline", __name__)
-
-# 模块级线程池（全局复用，避免反复创建销毁）
-executor = ThreadPoolExecutor(max_workers=4)
 
 # 各步骤超时（秒），留 10s 余量
 _TIMEOUT_RECOGNIZE = 130    # MiMo 识别 120s
@@ -34,8 +33,44 @@ _TIMEOUT_IMAGE_EDIT = 310   # GPT-image 编辑 300s
 IMAGE_SUBDIRS = ("original", "generated", "refined", "thumb")
 for _sub in IMAGE_SUBDIRS:
     (UPLOAD_DIR / _sub).mkdir(parents=True, exist_ok=True)
-for _sub in IMAGE_SUBDIRS:
-    (UPLOAD_DIR / _sub).mkdir(parents=True, exist_ok=True)
+
+
+# 心跳间隔（秒）— 低于反向代理常见 60s 超时
+_HEARTBEAT_INTERVAL = 30
+
+
+def _run_with_heartbeat(fn, *args, interval=_HEARTBEAT_INTERVAL):
+    """在后台线程执行 fn，主线程每隔 interval 秒 yield 心跳注释。
+
+    返回生成器，依次产出心跳字符串和最终结果。
+    用法::
+
+        for item in _run_with_heartbeat(long_fn, arg1, arg2):
+            if isinstance(item, str):
+                yield item          # 心跳
+            else:
+                result = item       # 最终结果
+    """
+    result_box = [None]
+    exc_box = [None]
+
+    def _target():
+        try:
+            result_box[0] = fn(*args)
+        except Exception as e:
+            exc_box[0] = e
+
+    t = threading.Thread(target=_target, daemon=True)
+    t.start()
+
+    while t.is_alive():
+        t.join(timeout=interval)
+        if t.is_alive():
+            yield f": keepalive\n\n"
+
+    if exc_box[0] is not None:
+        raise exc_box[0]
+    yield result_box[0]
 
 
 def _save_with_thumbnail(filename: str, image_bytes: bytes, subdir: str = "original"):
@@ -391,7 +426,12 @@ def api_full_pipeline_stream():
 
     def _stream_compliance(scene_desc: str):
         """流式合规分析：提取子问题 → 并行查询 MaxKB"""
-        sub_queries = extract_sub_queries(scene_desc)
+        sub_queries = None
+        for item in _run_with_heartbeat(extract_sub_queries, scene_desc):
+            if isinstance(item, str):
+                yield item
+            else:
+                sub_queries = item
         queries = [f"以下是景区场景描述：\n{scene_desc}\n\n请根据以上场景和旅游景区相关国家标准回答：{sq}" for sq in sub_queries]
         logger.info(f"[SSE-Compliance] 开始并行查询 MaxKB | 共 {len(queries)} 个问题")
 
@@ -449,11 +489,16 @@ def api_full_pipeline_stream():
 
         yield f"data: {json.dumps({'type': 'original', 'url': original_url}, ensure_ascii=False)}\n\n"
 
-        # Step 1: 识别
+        # Step 1: 识别（带心跳，防止长时间无输出导致超时）
         logger.info("[SSE] ========== Step 1: MiMo 视觉识别 ==========")
         t1 = time.time()
         yield f"data: {json.dumps({'type': 'step', 'step': 'recognize', 'status': 'running'}, ensure_ascii=False)}\n\n"
-        recognize_result = recognize_with_mimo(image_bytes, image_format)
+        recognize_result = None
+        for item in _run_with_heartbeat(recognize_with_mimo, image_bytes, image_format):
+            if isinstance(item, str):
+                yield item
+            else:
+                recognize_result = item
         step_data = {"type": "step", "step": "recognize", "time_ms": int((time.time() - t1) * 1000), **recognize_result}
         logger.info(f"[SSE] Step 1 完成 | 耗时: {step_data['time_ms']}ms | success={recognize_result.get('success')}")
         hist["step_times"]["step1_ms"] = step_data["time_ms"]
@@ -505,11 +550,16 @@ def api_full_pipeline_stream():
         hist["compliance_analysis"] = full_answer
         yield f"data: {json.dumps({'type': 'step', 'step': 'compliance', 'time_ms': t2_ms, 'success': True, 'analysis': full_answer, 'sources': final_sources}, ensure_ascii=False)}\n\n"
 
-        # Step 3: 生成提示词
+        # Step 3: 生成提示词（带心跳）
         logger.info("[SSE] ========== Step 3: 生成改图提示词 ==========")
         t3 = time.time()
         yield f"data: {json.dumps({'type': 'step', 'step': 'prompt', 'status': 'running'}, ensure_ascii=False)}\n\n"
-        prompt_result = generate_edit_prompt(scene_description, full_answer)
+        prompt_result = None
+        for item in _run_with_heartbeat(generate_edit_prompt, scene_description, full_answer):
+            if isinstance(item, str):
+                yield item
+            else:
+                prompt_result = item
         step_data = {"type": "step", "step": "prompt", "time_ms": int((time.time() - t3) * 1000), **prompt_result}
         logger.info(f"[SSE] Step 3 完成 | 耗时: {step_data['time_ms']}ms | success={prompt_result.get('success')}")
         hist["step_times"]["step3_ms"] = step_data["time_ms"]
@@ -522,11 +572,16 @@ def api_full_pipeline_stream():
 
         hist["edit_prompt"] = prompt_result.get("prompt")
 
-        # Step 4: 图片编辑
+        # Step 4: 图片编辑（带心跳，防止长时间无输出导致超时）
         logger.info("[SSE] ========== Step 4: GPT-Image 图片编辑 ==========")
         t4 = time.time()
         yield f"data: {json.dumps({'type': 'step', 'step': 'image_edit', 'status': 'running'}, ensure_ascii=False)}\n\n"
-        image_result = generate_edited_image(image_bytes, image_format, prompt_result["prompt"])
+        image_result = None
+        for item in _run_with_heartbeat(generate_edited_image, image_bytes, image_format, prompt_result["prompt"]):
+            if isinstance(item, str):
+                yield item
+            else:
+                image_result = item
         step_data = {"type": "step", "step": "image_edit", "time_ms": int((time.time() - t4) * 1000)}
         logger.info(f"[SSE] Step 4 完成 | 耗时: {step_data['time_ms']}ms | success={image_result.get('success')}")
         hist["step_times"]["step4_ms"] = step_data["time_ms"]

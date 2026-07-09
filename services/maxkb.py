@@ -1,7 +1,7 @@
 """Step 2: MaxKB 合规分析 — 提取子问题 + 并行查询 MaxKB 知识库"""
 
 import json
-from concurrent.futures import ThreadPoolExecutor
+import time
 
 import requests
 
@@ -9,57 +9,68 @@ from config.settings import settings
 from core.logging import logger
 
 
-def _query_maxkb_single(query: str, base_url: str, api_key: str) -> tuple:
-    """单次 MaxKB 查询，返回 (answer, sources)"""
-    logger.debug(f"[MaxKB] 查询: {query[:100]}...")
-    try:
-        resp = requests.get(f"{base_url}/open", headers={"Authorization": f"Bearer {api_key}", "accept": "*/*"}, timeout=30)
-        if resp.status_code != 200:
-            logger.error(f"[MaxKB] 获取 chat_id 失败: {resp.status_code} - {resp.text[:200]}")
+def _query_maxkb_single(query: str, base_url: str, api_key: str, retries: int = 3) -> tuple:
+    """单次 MaxKB 查询，返回 (answer, sources)，带重试"""
+    for attempt in range(1, retries + 1):
+        logger.debug(f"[MaxKB] 查询 (尝试 {attempt}/{retries}): {query[:100]}...")
+        try:
+            resp = requests.get(f"{base_url}/open", headers={"Authorization": f"Bearer {api_key}", "accept": "*/*"}, timeout=30)
+            if resp.status_code != 200:
+                logger.warning(f"[MaxKB] 获取 chat_id 失败 (尝试 {attempt}): {resp.status_code} - {resp.text[:200]}")
+                if attempt < retries:
+                    time.sleep(2 * attempt)
+                    continue
+                return "", []
+            chat_id = resp.json().get("data", "")
+            logger.debug(f"[MaxKB] 获取 chat_id: {chat_id}")
+
+            resp = requests.post(
+                f"{base_url}/chat_message/{chat_id}",
+                headers={"Authorization": f"Bearer {api_key}", "accept": "*/*"},
+                data={"message": query, "stream": "true", "re_chat": "false"},
+                timeout=(30, 300),
+                stream=True,
+            )
+            if resp.status_code != 200:
+                logger.warning(f"[MaxKB] chat_message 请求失败 (尝试 {attempt}): {resp.status_code} - {resp.text[:200]}")
+                if attempt < retries:
+                    time.sleep(2 * attempt)
+                    continue
+                return "", []
+
+            answer = ""
+            sources = []
+            for raw_line in resp.iter_lines():
+                if not raw_line or not raw_line.startswith(b"data:"):
+                    continue
+                json_str = raw_line[5:].decode("utf-8", errors="replace").strip()
+                if not json_str:
+                    continue
+                try:
+                    event = json.loads(json_str)
+                except json.JSONDecodeError:
+                    continue
+
+                for para in event.get("paragraph_list", []):
+                    meta = para.get("metadata", {})
+                    name = meta.get("document_name", "")
+                    if name and name not in sources:
+                        sources.append(name)
+
+                if event.get("node_type") == "ai-chat-node":
+                    content = event.get("content", "")
+                    if content:
+                        answer += content
+
+            logger.debug(f"[MaxKB] 查询完成 | 回答长度: {len(answer)} 字符 | 来源: {sources}")
+            return answer, sources
+        except Exception as e:
+            logger.warning(f"[MaxKB] 查询异常 (尝试 {attempt}): {e}")
+            if attempt < retries:
+                time.sleep(2 * attempt)
+                continue
             return "", []
-        chat_id = resp.json().get("data", "")
-        logger.debug(f"[MaxKB] 获取 chat_id: {chat_id}")
-
-        resp = requests.post(
-            f"{base_url}/chat_message/{chat_id}",
-            headers={"Authorization": f"Bearer {api_key}", "accept": "*/*"},
-            data={"message": query, "stream": "true", "re_chat": "false"},
-            timeout=(30, 300),
-            stream=True,
-        )
-        if resp.status_code != 200:
-            logger.error(f"[MaxKB] chat_message 请求失败: {resp.status_code} - {resp.text[:200]}")
-            return "", []
-
-        answer = ""
-        sources = []
-        for raw_line in resp.iter_lines():
-            if not raw_line or not raw_line.startswith(b"data:"):
-                continue
-            json_str = raw_line[5:].decode("utf-8", errors="replace").strip()
-            if not json_str:
-                continue
-            try:
-                event = json.loads(json_str)
-            except json.JSONDecodeError:
-                continue
-
-            for para in event.get("paragraph_list", []):
-                meta = para.get("metadata", {})
-                name = meta.get("document_name", "")
-                if name and name not in sources:
-                    sources.append(name)
-
-            if event.get("node_type") == "ai-chat-node":
-                content = event.get("content", "")
-                if content:
-                    answer += content
-
-        logger.debug(f"[MaxKB] 查询完成 | 回答长度: {len(answer)} 字符 | 来源: {sources}")
-        return answer, sources
-    except Exception as e:
-        logger.error(f"[MaxKB] 查询异常: {e}")
-        return "", []
+    return "", []
 
 
 def _parse_queries(content: str) -> list:
@@ -187,17 +198,18 @@ def analyze_compliance_with_maxkb(scene_description: str, user_role: str = "tour
     queries = [f"以下是景区场景描述：\n{scene_description}\n\n请根据以上场景和旅游景区相关国家标准回答：{sq}" for sq in sub_queries]
     logger.info(f"[Step2] 开始并行查询 MaxKB | 共 {len(queries)} 个问题")
 
-    # Step 2: 并行查询 MaxKB（4路并发）
+    # Step 2: 并行查询 MaxKB（复用共享线程池）
+    from core.executor import executor
+
     results = [None] * len(queries)
 
     def _query_one(idx, q):
         answer, sources = _query_maxkb_single(q, base_url, api_key)
         results[idx] = (answer, sources)
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = [pool.submit(_query_one, i, q) for i, q in enumerate(queries)]
-        for f in futures:
-            f.result()
+    futures = [executor.submit(_query_one, i, q) for i, q in enumerate(queries)]
+    for f in futures:
+        f.result()
 
     # Step 3: 汇总
     all_answers = []
